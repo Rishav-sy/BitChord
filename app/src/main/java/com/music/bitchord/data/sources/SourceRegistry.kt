@@ -370,6 +370,9 @@ object SourceRegistry {
     suspend fun probeCandidate(config: SourceConfig): SourceHealth = build(config).health()
 
     private fun build(config: SourceConfig): MusicSource = when (config.kind) {
+        SourceKind.TIDAL -> TidalSource(config)
+        SourceKind.QOBUZ -> QobuzSource(config)
+        SourceKind.DEEZER -> DeezerSource(config)
         SourceKind.ADDON -> AddonSource(config)
         // Same protocol, same implementation — the kinds differ only in rank.
         SourceKind.CUSTOM_MODULE -> ModuleSource(config)
@@ -424,7 +427,13 @@ object SourceRegistry {
             .build()
             .toString()
 
-    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.YOUTUBE)
+    private val BUILT_IN_KINDS = listOf(
+        SourceKind.TIDAL,
+        SourceKind.QOBUZ,
+        SourceKind.DEEZER,
+        SourceKind.JIOSAAVN,
+        SourceKind.YOUTUBE,
+    )
 
     private const val KEY_SOURCES = "sources"
     private const val PREFIX = "src:"

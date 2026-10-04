@@ -716,6 +716,11 @@ object SourceResolver {
      * @return the winning source alongside its stream, so callers can name it in
      *   a log line without searching the list again.
      */
+    private data class SourceTask(
+        val source: MusicSource,
+        val deferred: Deferred<Pair<MusicSource, SourceStream?>>,
+    )
+
     internal suspend fun bestAcross(
         sources: List<MusicSource>,
         target: TrackMatcher.Target,
@@ -725,47 +730,63 @@ object SourceResolver {
         requireSharedArtist: Boolean = false,
         accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
-        val running: MutableList<Deferred<Pair<MusicSource, SourceStream?>>> = sources
+        val running: MutableList<SourceTask> = sources
             .map { source ->
-                async {
-                    source to matchAndStream(
-                        source,
-                        target,
-                        request,
-                        waitForAll,
-                        strictLength,
-                        requireSharedArtist,
-                    )
-                }
+                SourceTask(
+                    source = source,
+                    deferred = async {
+                        source to matchAndStream(
+                            source,
+                            target,
+                            request,
+                            waitForAll,
+                            strictLength,
+                            requireSharedArtist,
+                        )
+                    },
+                )
             }
             .toMutableList()
         var best: Pair<MusicSource, SourceStream>? = null
         try {
             while (running.isNotEmpty()) {
                 val first = select {
-                    running.forEach { candidate -> candidate.onAwait { candidate } }
+                    running.forEach { task -> task.deferred.onAwait { task } }
                 }
                 // Anything that crossed the line while that one was being waited
                 // on is already sitting there. Folding those in costs no time at
                 // all and is what lets rank break a tie between two sources that
                 // both answered quickly.
-                val ready = listOf(first) + running.filter { it !== first && it.isCompleted }
+                val ready = listOf(first) + running.filter { it !== first && it.deferred.isCompleted }
                 running -= ready.toSet()
-                for (done in ready) {
-                    val (source, stream) = done.await()
+                for (task in ready) {
+                    val (source, stream) = task.deferred.await()
                     if (stream == null) continue
                     if (!accept(source, stream)) continue
-                    if (isBetter(stream.format, best?.second?.format)) best = source to stream
+                    if (isBetter(stream.format, best?.second?.format, source.kind.rank, best?.first?.kind?.rank ?: Int.MAX_VALUE)) {
+                        best = source to stream
+                    }
                 }
-                // Playback needs the first usable answer so sound can start.
-                // An upgrade is different: it runs while audio is already
-                // playing, and its caller explicitly requested every source's
-                // patient result. Let every source finish so a fast lower tier
-                // cannot cancel a later, better rendition.
-                if (best != null && !waitForAll) break
+                // Playback needs the first usable answer so sound can start quickly.
+                // However, if the request is Lossless and we only have a lossy stream
+                // so far (e.g. JioSaavn 320k), do not break while lossless sources
+                // (Tidal/Qobuz/Deezer) are still running.
+                if (best != null && !waitForAll) {
+                    val isLossless = best.second.format.isLossless == true
+                    val pendingBetterSource = running.any { task ->
+                        if (isLossless) {
+                            task.source.kind.canServeLossless && task.source.kind.rank < best.first.kind.rank
+                        } else {
+                            request is StreamRequest.Lossless && task.source.kind.canServeLossless
+                        }
+                    }
+                    if (!pendingBetterSource || request !is StreamRequest.Lossless) {
+                        break
+                    }
+                }
             }
         } finally {
-            running.forEach { it.cancel() }
+            running.forEach { it.deferred.cancel() }
         }
         best
     }
@@ -961,11 +982,22 @@ object SourceResolver {
      * better; that one asks whether the difference is worth a break in the
      * audio, which is a much higher bar and only meaningful mid-playback.
      */
-    internal fun isBetter(candidate: StreamFormat, current: StreamFormat?): Boolean {
+    internal fun isBetter(
+        candidate: StreamFormat,
+        current: StreamFormat?,
+        candidateRank: Int = Int.MAX_VALUE,
+        currentRank: Int = Int.MAX_VALUE,
+    ): Boolean {
         if (current == null) return true
         if (candidate.isLossless != current.isLossless) return candidate.isLossless == true
         if (candidate.isDolbyAtmos != current.isDolbyAtmos) return candidate.isDolbyAtmos
-        return (candidate.kbps ?: 0) > (current.kbps ?: 0)
+        if (candidate.isLossless == true && current.isLossless == true) {
+            return candidateRank < currentRank
+        }
+        val candKbps = candidate.kbps ?: 0
+        val currKbps = current.kbps ?: 0
+        if (candKbps != currKbps) return candKbps > currKbps
+        return candidateRank < currentRank
     }
 
     /** The higher-quality of two streams — see [isBetter]. */

@@ -183,6 +183,8 @@ fun SourcesScreen(
             val addons = configs.filter { it.kind.isUserAdded }
             val fixed = configs.filterNot { it.kind.isUserAdded }
                 .sortedBy { it.kind.rank }
+            val preAddonFixed = fixed.filter { it.kind.rank < SourceKind.USER_ADDED }
+            val postAddonFixed = fixed.filter { it.kind.rank > SourceKind.USER_ADDED }
 
             val row: @Composable (Int, SourceConfig, (@Composable () -> Unit)?) -> Unit =
                 { position, config, handle ->
@@ -201,7 +203,7 @@ fun SourcesScreen(
                         // Anything the user configured is theirs to edit or
                         // delete. JioSaavn and YouTube have no address to
                         // change, so a tap on them would open an empty editor.
-                        onClick = if (config.kind.needsServer) ({ onEditSource(config) }) else null,
+                        onClick = if (config.kind.needsServer || config.kind in listOf(SourceKind.TIDAL, SourceKind.QOBUZ, SourceKind.DEEZER)) ({ onEditSource(config) }) else null,
                         // YouTube gets no switch at all — see
                         // [SourceRegistry.setEnabled] for why one would be a lie.
                         onToggle = if (config.kind == SourceKind.YOUTUBE) {
@@ -213,18 +215,24 @@ fun SourcesScreen(
                     )
                 }
 
-            ReorderableAddons(
-                addons = addons,
-                onReorder = { SourceRegistry.reorderAddons(it.map(SourceConfig::id)) },
-                row = row,
-            )
-
-            // No leading divider when addons came first: each of those wrappers
-            // ends with one, which is what makes them all the same height for
-            // the drag to measure against.
-            fixed.forEachIndexed { index, config ->
+            var nextPos = 1
+            preAddonFixed.forEachIndexed { index, config ->
                 if (index > 0) RowDivider()
-                row(addons.size + index + 1, config, null)
+                row(nextPos++, config, null)
+            }
+
+            if (addons.isNotEmpty()) {
+                if (preAddonFixed.isNotEmpty()) RowDivider()
+                ReorderableAddons(
+                    addons = addons,
+                    onReorder = { SourceRegistry.reorderAddons(it.map(SourceConfig::id)) },
+                    row = { _, config, handle -> row(nextPos++, config, handle) },
+                )
+            }
+
+            postAddonFixed.forEachIndexed { index, config ->
+                if (index > 0 || preAddonFixed.isNotEmpty() || addons.isNotEmpty()) RowDivider()
+                row(nextPos++, config, null)
             }
 
             RowDivider()
@@ -499,10 +507,13 @@ private fun SourceRow(
         Spacer(Modifier.width(6.dp))
         Icon(
             imageVector = when (config.kind) {
-                SourceKind.ADDON -> Icons.Rounded.Extension
-                SourceKind.CUSTOM_MODULE -> Icons.Rounded.Extension
+                SourceKind.TIDAL,
+                SourceKind.QOBUZ,
+                SourceKind.DEEZER -> Icons.Rounded.GraphicEq
+                SourceKind.ADDON,
+                SourceKind.CUSTOM_MODULE,
                 SourceKind.MODULE -> Icons.Rounded.Extension
-                SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
+                SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
             },
             contentDescription = null,
