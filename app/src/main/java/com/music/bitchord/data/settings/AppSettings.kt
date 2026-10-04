@@ -121,6 +121,12 @@ enum class ThemeMode(val label: String) {
     SYSTEM("System"), LIGHT("Light"), DARK("Dark")
 }
 
+enum class UpdateChannel(val label: String, val detail: String) {
+    OFFICIAL("Official", "Releases from kushagrasinghx/BitChord"),
+    FORK("My Fork", "Releases from your private GitHub repository"),
+    BOTH("Both Channels", "Check official releases and your personal fork"),
+}
+
 /** CPU budget for Automix's background analysis, not its audible mix algorithm. */
 enum class AutomixPerformanceMode(val inferenceThreads: Int) {
     EFFICIENT(1),
@@ -248,6 +254,10 @@ object AppSettings {
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
     val skipSilence = MutableStateFlow(false)
+
+    val updateChannel = MutableStateFlow(UpdateChannel.BOTH)
+    val customUpdateRepo = MutableStateFlow("Rishav-sy/BitChord")
+    val githubUpdateToken = MutableStateFlow("")
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
     val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
@@ -615,6 +625,11 @@ object AppSettings {
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
+        updateChannel.value = runCatching {
+            UpdateChannel.valueOf(prefs.getString(KEY_UPDATE_CHANNEL, null) ?: UpdateChannel.BOTH.name)
+        }.getOrDefault(UpdateChannel.BOTH)
+        customUpdateRepo.value = prefs.getString(KEY_CUSTOM_UPDATE_REPO, "Rishav-sy/BitChord") ?: "Rishav-sy/BitChord"
+        githubUpdateToken.value = prefs.getString(KEY_GITHUB_UPDATE_TOKEN, "") ?: ""
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         automixPerformanceMode.value = runCatching {
@@ -840,6 +855,23 @@ object AppSettings {
     fun setWifiOnlyDownloads(value: Boolean) {
         wifiOnlyDownloads.value = value
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
+    }
+
+    fun setUpdateChannel(channel: UpdateChannel) {
+        updateChannel.value = channel
+        prefs.edit().putString(KEY_UPDATE_CHANNEL, channel.name).apply()
+    }
+
+    fun setCustomUpdateRepo(repo: String) {
+        val clean = repo.trim().removePrefix("https://github.com/").trimEnd('/')
+        customUpdateRepo.value = clean
+        prefs.edit().putString(KEY_CUSTOM_UPDATE_REPO, clean).apply()
+    }
+
+    fun setGithubUpdateToken(token: String) {
+        val clean = token.trim()
+        githubUpdateToken.value = clean
+        prefs.edit().putString(KEY_GITHUB_UPDATE_TOKEN, clean).apply()
     }
 
     fun setCrossfadeSeconds(value: Int) {
@@ -1475,6 +1507,9 @@ object AppSettings {
     private const val KEY_DISCORD_BUTTON_2_VISIBLE = "discord_button_2_visible"
     private const val KEY_DISCORD_INFO_DISMISSED = "discord_info_dismissed"
     private const val KEY_LAST_VERSION_CODE = "last_version_code"
+    private const val KEY_UPDATE_CHANNEL = "update_channel"
+    private const val KEY_CUSTOM_UPDATE_REPO = "custom_update_repo"
+    private const val KEY_GITHUB_UPDATE_TOKEN = "github_update_token"
 }
 
 /**

@@ -2940,6 +2940,7 @@ private fun BitChordApp(
                 UpdateAvailableDialog(
                     version = update.version,
                     notes = update.notes,
+                    channel = update.channel,
                     hazeState = hazeState,
                     // A download in progress keeps running behind the closed
                     // sheet — only the sheet itself goes away. The top bar's

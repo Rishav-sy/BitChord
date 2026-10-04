@@ -19,11 +19,14 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Request
 import java.io.File
 
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.UpdateChannel
+
 /**
  * BitChord ships as a sideloaded APK off GitHub Releases rather than through
  * a store, so there's nothing to push an update notice on its own — this
- * polls the repo's "latest release" once per launch and compares its tag
- * against the running build.
+ * polls the configured repo's "latest release" (Official, Fork, or Both)
+ * and compares its tag against the running build.
  *
  * The update itself is also handled here: the release's `.apk` asset is
  * downloaded into the app's cache and handed to the system package installer,
@@ -32,23 +35,35 @@ import java.io.File
  */
 object AppUpdateChecker {
 
+    const val OFFICIAL_REPO = "kushagrasinghx/BitChord"
+
     data class UpdateInfo(
         val version: String,
         val releaseUrl: String,
         val apkUrl: String?,
         /** The release's own Markdown body, shown as this update's "what's new". */
         val notes: String?,
+        val channel: String = "Official",
+        val repo: String = OFFICIAL_REPO,
     )
 
-    private const val CACHE_SUBDIR = "updates"
+    sealed interface CheckStatus {
+        data object Idle : CheckStatus
+        data object Checking : CheckStatus
+        data class UpToDate(val version: String, val channel: String) : CheckStatus
+        data class Available(val info: UpdateInfo) : CheckStatus
+        data class Failed(val message: String) : CheckStatus
+    }
 
-    private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/kushagrasinghx/BitChord/releases/latest"
+    private const val CACHE_SUBDIR = "updates"
 
     private val json = Json { ignoreUnknownKeys = true }
 
     private val _available = MutableStateFlow<UpdateInfo?>(null)
     val available = _available.asStateFlow()
+
+    private val _checkStatus = MutableStateFlow<CheckStatus>(CheckStatus.Idle)
+    val checkStatus = _checkStatus.asStateFlow()
 
     /** Where this update's APK download currently stands, for the dialog's progress row. */
     sealed interface DownloadState {
@@ -66,22 +81,84 @@ object AppUpdateChecker {
     private var downloadCancelled = false
 
     suspend fun check() = withContext(Dispatchers.IO) {
-        runCatching {
-            val request = Request.Builder().url(LATEST_RELEASE_URL).build()
-            val body = Http.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) null else response.body?.string()
-            } ?: return@runCatching
-            val release = json.parseToJsonElement(body) as? JsonObject ?: return@runCatching
-            val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
-            val url = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
-            val apkUrl = apkAssetUrl(release)
-            val notes = release["body"]?.jsonPrimitive?.contentOrNull
-            val latest = tag.removePrefix("v")
-            if (isNewer(latest, BuildConfig.VERSION_NAME)) {
-                _available.value = UpdateInfo(latest, url, apkUrl, notes)
+        val update = resolveUpdate()
+        if (update != null) {
+            _available.value = update
+        }
+    }
+
+    suspend fun checkManual(): CheckStatus = withContext(Dispatchers.IO) {
+        _checkStatus.value = CheckStatus.Checking
+        try {
+            val update = resolveUpdate()
+            if (update != null) {
+                _available.value = update
+                val status = CheckStatus.Available(update)
+                _checkStatus.value = status
+                status
+            } else {
+                val channel = AppSettings.updateChannel.value.label
+                val status = CheckStatus.UpToDate(BuildConfig.VERSION_NAME, channel)
+                _checkStatus.value = status
+                status
+            }
+        } catch (e: Exception) {
+            val status = CheckStatus.Failed(e.message ?: "Failed to check for updates")
+            _checkStatus.value = status
+            status
+        }
+    }
+
+    private suspend fun resolveUpdate(): UpdateInfo? {
+        val channel = AppSettings.updateChannel.value
+        val customRepo = AppSettings.customUpdateRepo.value.ifBlank { "Rishav-sy/BitChord" }
+
+        return when (channel) {
+            UpdateChannel.OFFICIAL -> fetchRelease(OFFICIAL_REPO, "Official")
+            UpdateChannel.FORK -> fetchRelease(customRepo, "My Fork")
+            UpdateChannel.BOTH -> {
+                val official = fetchRelease(OFFICIAL_REPO, "Official")
+                val fork = fetchRelease(customRepo, "My Fork")
+                when {
+                    official == null -> fork
+                    fork == null -> official
+                    isNewer(fork.version, official.version) -> fork
+                    else -> official
+                }
             }
         }
     }
+
+    private suspend fun fetchRelease(repo: String, channelName: String): UpdateInfo? = runCatching {
+        val token = if (repo != OFFICIAL_REPO) AppSettings.githubUpdateToken.value.trim() else ""
+        val url = "https://api.github.com/repos/$repo/releases/latest"
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .header("User-Agent", "BitChord-Android")
+        if (token.isNotBlank()) {
+            requestBuilder.header("Authorization", "Bearer $token")
+        }
+        val responseBody = Http.client.newCall(requestBuilder.build()).execute().use { response ->
+            if (!response.isSuccessful) null else response.body?.string()
+        } ?: return null
+
+        val release = json.parseToJsonElement(responseBody) as? JsonObject ?: return null
+        val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return null
+        val htmlUrl = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return null
+        val apkUrl = apkAssetUrl(release, isPrivateWithToken = token.isNotBlank())
+        val notes = release["body"]?.jsonPrimitive?.contentOrNull
+        val latest = tag.removePrefix("v")
+        if (isNewer(latest, BuildConfig.VERSION_NAME)) {
+            UpdateInfo(
+                version = latest,
+                releaseUrl = htmlUrl,
+                apkUrl = apkUrl,
+                notes = notes,
+                channel = channelName,
+                repo = repo,
+            )
+        } else null
+    }.getOrNull()
 
     /**
      * Wipes any APK left over from a previous run. Called once at cold start
@@ -99,16 +176,19 @@ object AppUpdateChecker {
      * [UpdateInfo.apkUrl] null and the UI falls back to opening the releases
      * page as before.
      */
-    private fun apkAssetUrl(release: JsonObject): String? = runCatching {
-        release["assets"]?.jsonArray
+    private fun apkAssetUrl(release: JsonObject, isPrivateWithToken: Boolean = false): String? = runCatching {
+        val asset = release["assets"]?.jsonArray
             ?.mapNotNull { it as? JsonObject }
-            ?.firstOrNull { asset ->
-                asset["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk", ignoreCase = true) == true &&
-                    asset["state"]?.jsonPrimitive?.contentOrNull == "uploaded"
-            }
-            ?.get("browser_download_url")
-            ?.jsonPrimitive
-            ?.contentOrNull
+            ?.firstOrNull { item ->
+                item["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk", ignoreCase = true) == true &&
+                    item["state"]?.jsonPrimitive?.contentOrNull == "uploaded"
+            } ?: return null
+
+        if (isPrivateWithToken) {
+            asset["url"]?.jsonPrimitive?.contentOrNull ?: asset["browser_download_url"]?.jsonPrimitive?.contentOrNull
+        } else {
+            asset["browser_download_url"]?.jsonPrimitive?.contentOrNull
+        }
     }.getOrNull()
 
     /**
@@ -129,7 +209,12 @@ object AppUpdateChecker {
             dir.listFiles()?.forEach { it.delete() }
             val target = File(dir, "bitchord-${info.version}.apk")
 
-            val request = Request.Builder().url(url).build()
+            val requestBuilder = Request.Builder().url(url)
+            if (info.repo != OFFICIAL_REPO && AppSettings.githubUpdateToken.value.isNotBlank()) {
+                requestBuilder.header("Authorization", "Bearer ${AppSettings.githubUpdateToken.value.trim()}")
+                requestBuilder.header("Accept", "application/octet-stream")
+            }
+            val request = requestBuilder.build()
             Http.client.newCall(request).execute().use { response ->
                 check(response.isSuccessful) { "Download failed: HTTP ${response.code}" }
                 val body = response.body ?: error("Empty download body")

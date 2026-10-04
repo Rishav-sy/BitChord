@@ -84,6 +84,7 @@ fun UpdateAvailableDialog(
     version: String,
     notes: String?,
     hazeState: HazeState,
+    channel: String? = null,
     onDismiss: () -> Unit,
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
@@ -139,7 +140,11 @@ fun UpdateAvailableDialog(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = stringResource(R.string.software_update),
+                    text = if (channel != null) {
+                        "${stringResource(R.string.software_update)} • $channel"
+                    } else {
+                        stringResource(R.string.software_update)
+                    },
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontSize = 17.sp,
                         fontWeight = FontWeight.W600,

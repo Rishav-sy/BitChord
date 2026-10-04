@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
@@ -49,6 +51,7 @@ import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
@@ -61,6 +64,7 @@ import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SurroundSound
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Waves
@@ -69,6 +73,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -106,6 +111,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -122,6 +128,8 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import com.music.bitchord.ui.performance.supportedPerformanceRefreshRates
 import com.music.bitchord.data.model.Account
+import com.music.bitchord.data.AppUpdateChecker
+import com.music.bitchord.data.settings.UpdateChannel
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
@@ -237,6 +245,15 @@ fun SettingsScreen(
     val listenBrainzToken by AppSettings.listenBrainzToken.collectAsStateWithLifecycle()
 
     val replayGenres by AppSettings.replayGenres.collectAsStateWithLifecycle()
+
+    val updateChannel by AppSettings.updateChannel.collectAsStateWithLifecycle()
+    val customUpdateRepo by AppSettings.customUpdateRepo.collectAsStateWithLifecycle()
+    val githubUpdateToken by AppSettings.githubUpdateToken.collectAsStateWithLifecycle()
+    val checkStatus by AppUpdateChecker.checkStatus.collectAsStateWithLifecycle()
+    var pickingUpdateChannel by remember { mutableStateOf(false) }
+    var showCustomRepoDialog by remember { mutableStateOf(false) }
+    var showGithubTokenDialog by remember { mutableStateOf(false) }
+    val updateScope = rememberCoroutineScope()
 
     var picking by remember { mutableStateOf<QualityTarget?>(null) }
     var pickingDownloadQuality by remember { mutableStateOf(false) }
@@ -1059,6 +1076,90 @@ fun SettingsScreen(
             )
         }
 
+        SettingsGroup(header = "Updates") {
+            SettingsRow(
+                icon = Icons.Rounded.Sync,
+                title = "Update Channel",
+                subtitle = updateChannel.detail,
+                trailing = {
+                    Text(
+                        text = updateChannel.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+                onClick = { pickingUpdateChannel = true },
+            )
+            if (updateChannel == UpdateChannel.FORK || updateChannel == UpdateChannel.BOTH) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.AccountTree,
+                    title = "Fork Repository",
+                    subtitle = customUpdateRepo,
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    onClick = { showCustomRepoDialog = true },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Key,
+                    title = "GitHub Token",
+                    subtitle = if (githubUpdateToken.isNotBlank()) "Configured (Private repo access)" else "Optional · Required for private repos",
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    onClick = { showGithubTokenDialog = true },
+                )
+            }
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.CloudDownload,
+                title = "Check for Updates",
+                subtitle = when (val s = checkStatus) {
+                    is AppUpdateChecker.CheckStatus.Checking -> "Checking for updates..."
+                    is AppUpdateChecker.CheckStatus.UpToDate -> "Up to date (${s.version}) • ${s.channel}"
+                    is AppUpdateChecker.CheckStatus.Available -> "Update available: v${s.info.version} (${s.info.channel})!"
+                    is AppUpdateChecker.CheckStatus.Failed -> "Check failed: ${s.message}"
+                    AppUpdateChecker.CheckStatus.Idle -> "Tap to query latest releases"
+                },
+                trailing = {
+                    if (checkStatus is AppUpdateChecker.CheckStatus.Checking) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else if (checkStatus is AppUpdateChecker.CheckStatus.Available) {
+                        Text(
+                            text = "Update",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        Text(
+                            text = "Check",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                },
+                onClick = {
+                    updateScope.launch {
+                        AppUpdateChecker.checkManual()
+                    }
+                },
+            )
+        }
+
         Text(
             text = buildAnnotatedString {
                 append("bitchord $version  ")
@@ -1335,6 +1436,168 @@ fun SettingsScreen(
         )
     }
 
+    if (pickingUpdateChannel) {
+        ModalBottomSheet(
+            onDismissRequest = { pickingUpdateChannel = false },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            UpdateChannelSheet(
+                selected = updateChannel,
+                onSelect = { channel ->
+                    AppSettings.setUpdateChannel(channel)
+                    pickingUpdateChannel = false
+                },
+            )
+        }
+    }
+
+    if (showCustomRepoDialog) {
+        var repoInput by remember { mutableStateOf(customUpdateRepo) }
+        AlertDialog(
+            onDismissRequest = { showCustomRepoDialog = false },
+            title = { Text("Fork Repository") },
+            text = {
+                Column {
+                    Text(
+                        text = "Enter GitHub repository for updates (format: owner/repo):",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    OutlinedTextField(
+                        value = repoInput,
+                        onValueChange = { repoInput = it },
+                        placeholder = { Text("e.g. Rishav-sy/BitChord") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (repoInput.isNotBlank()) {
+                        AppSettings.setCustomUpdateRepo(repoInput.trim())
+                    }
+                    showCustomRepoDialog = false
+                }) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomRepoDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (showGithubTokenDialog) {
+        var tokenInput by remember { mutableStateOf(githubUpdateToken) }
+        AlertDialog(
+            onDismissRequest = { showGithubTokenDialog = false },
+            title = { Text("GitHub Token (Private Repo)") },
+            text = {
+                Column {
+                    Text(
+                        text = "A GitHub Personal Access Token with 'repo' scope. Required to download releases from private forks.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    OutlinedTextField(
+                        value = tokenInput,
+                        onValueChange = { tokenInput = it },
+                        placeholder = { Text("ghp_... or gho_...") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    AppSettings.setGithubUpdateToken(tokenInput.trim())
+                    showGithubTokenDialog = false
+                }) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGithubTokenDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun UpdateChannelSheet(
+    selected: UpdateChannel,
+    onSelect: (UpdateChannel) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+        Row(
+            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Sync,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(
+                    text = "Update Channel",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = "Choose which releases to receive updates from",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+
+        UpdateChannel.entries.forEach { channel ->
+            val chosen = channel == selected
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelect(channel)
+                    }
+                    .padding(horizontal = 22.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = channel.label,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = channel.detail,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (chosen) {
+                    Icon(
+                        imageVector = Icons.Rounded.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** "3 months of listening" — the unit a backup is actually measured in. */
