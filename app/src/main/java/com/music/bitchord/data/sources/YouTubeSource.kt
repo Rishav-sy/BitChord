@@ -40,9 +40,17 @@ class YouTubeSource(
      */
     override suspend fun health(): SourceHealth = SourceHealth.Ok()
 
-    /** [waitForAll] is moot: there is one endpoint here, and it is always waited for. */
+    /**
+     * Resolves a recording against YouTube's catalogue. This is only ever
+     * called from [SourceResolver]'s playback-time resolution paths (live
+     * resolve, YouTube substitution, lossless upgrade) — never from the
+     * search UI, which excludes the YouTube source from its fan-out — so it
+     * goes through the unauthenticated pipeline: the listener never typed
+     * these queries and they must not be recorded to the account's
+     * server-side search history.
+     */
     override suspend fun search(query: String, limit: Int, waitForAll: Boolean): List<Song> =
-        YtMusicRepository.search(query, SearchFilter.SONGS)
+        YtMusicRepository.searchAnonymous(query, SearchFilter.SONGS)
             .getOrDefault(emptyList())
             .filterIsInstance<SearchResult.Track>()
             .map { it.song }

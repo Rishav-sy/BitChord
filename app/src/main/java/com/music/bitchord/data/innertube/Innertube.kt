@@ -594,6 +594,22 @@ object Innertube {
             params?.let { put("params", it) }
         }
 
+    /**
+     * Same shape as [search] but deliberately unauthenticated, for searches
+     * the app performs on its own while you listen — matching a module/local
+     * track against YouTube, seeding AutoPlay, analysing a track for Automix.
+     * The listener never typed these queries, so unlike [search] they must
+     * not be recorded against the signed-in account's server-side search
+     * history. Results are unpersonalised, which is fine for machine
+     * matching: [com.music.bitchord.data.sources.TrackMatcher] ranks by
+     * title, artist and duration, not by the account's taste.
+     */
+    suspend fun searchAnonymous(query: String, params: String? = null): JsonObject =
+        postMusicAnonymous("search") {
+            put("query", query)
+            params?.let { put("params", it) }
+        }
+
     /** The next page of a filtered search result. */
     suspend fun searchContinuation(token: String): JsonObject = postMusic(
         endpoint = "search",
@@ -1138,17 +1154,24 @@ object Innertube {
 
     // ---- Request plumbing ---------------------------------------------------
 
+    private suspend fun postMusicAnonymous(
+        endpoint: String,
+        query: Map<String, String> = emptyMap(),
+        bodyExtras: JsonObjectBuilder.() -> Unit,
+    ): JsonObject = postMusic(endpoint, query, authenticated = false, bodyExtras = bodyExtras)
+
     private suspend fun postMusic(
         endpoint: String,
         query: Map<String, String> = emptyMap(),
+        authenticated: Boolean = true,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         // This is the common authenticated request path: Home, Library,
         // likes, playlists, account menus and all their continuations pass
         // through it. Waiting here makes restoration process-wide rather than
         // a special case implemented by whichever screen happened to open.
-        if (cookie != null) ensureSessionScope()
-        val session = scope
+        if (authenticated && cookie != null) ensureSessionScope()
+        val session = if (authenticated) scope else null
         val clientVersion = webRemixVersion
         val response = withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
@@ -1164,14 +1187,16 @@ object Innertube {
                 header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
                 header("X-YouTube-Client-Version", clientVersion)
                 visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                cookie?.let { c ->
-                    header("Cookie", c)
-                    // Which account in the jar, and which brand channel of it.
-                    // Both were fixed at "the first one" before — see
-                    // [SessionScope].
-                    header("X-Goog-AuthUser", authUserFor(session))
-                    pageIdFor(session)?.let { header("X-Goog-PageId", it) }
-                    sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
+                if (authenticated) {
+                    cookie?.let { c ->
+                        header("Cookie", c)
+                        // Which account in the jar, and which brand channel of it.
+                        // Both were fixed at "the first one" before — see
+                        // [SessionScope].
+                        header("X-Goog-AuthUser", authUserFor(session))
+                        pageIdFor(session)?.let { header("X-Goog-PageId", it) }
+                        sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
+                    }
                 }
                 setBody(
                     buildJsonObject {
@@ -1190,7 +1215,9 @@ object Innertube {
                                 // `onBehalfOfUser` it cannot tie to the cookie
                                 // with 401, so a guess here would take the
                                 // whole app down rather than just history.
-                                dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                                if (authenticated) {
+                                    dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                                }
                             }
                             putJsonObject("request") { put("useSsl", true) }
                         }

@@ -787,7 +787,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private suspend fun findYouTubeMatch(target: TrackMatcher.Target): com.music.bitchord.data.model.Song? {
         if (target.title.isBlank()) return null
         for (query in TrackMatcher.queries(target)) {
-            val candidates = YtMusicRepository.search(query, SearchFilter.SONGS)
+            val candidates = YtMusicRepository.searchAnonymous(query, SearchFilter.SONGS)
                 .getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }

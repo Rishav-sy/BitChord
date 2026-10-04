@@ -19,7 +19,7 @@ suspend fun youtubeSeedFor(song: Song): String? {
     if (SourceRegistry.parseTrackKey(song.videoId) == null) return song.videoId
     val target = TrackMatcher.targetOf(song)
     val query = TrackMatcher.queries(target).firstOrNull() ?: return null
-    return YtMusicRepository.search(query, SearchFilter.SONGS)
+    return YtMusicRepository.searchAnonymous(query, SearchFilter.SONGS)
         .getOrNull()
         ?.filterIsInstance<SearchResult.Track>()
         ?.map { it.song }

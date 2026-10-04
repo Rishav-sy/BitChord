@@ -207,9 +207,14 @@ object ArtistFacts {
      * half of what this is for. The top artist hit for a name is the artist:
      * that is the same lookup the app already makes to find a video's catalogue
      * release, and the same one a person would make.
+     *
+     * Unauthenticated on purpose: this runs for every artist the listener
+     * plays, and the listener never typed the name — recording it would turn
+     * ordinary listening into search-history entries. See
+     * [YtMusicRepository.searchAnonymous].
      */
     private suspend fun fetchCard(name: String) {
-        val hit = YtMusicRepository.search(name, SearchFilter.ARTISTS).getOrNull()
+        val hit = YtMusicRepository.searchAnonymous(name, SearchFilter.ARTISTS).getOrNull()
             ?.filterIsInstance<SearchResult.Browse>()
             ?.firstOrNull()
             ?.item
