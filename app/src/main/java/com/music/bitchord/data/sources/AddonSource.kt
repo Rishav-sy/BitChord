@@ -5,6 +5,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonException
+import com.music.bitchord.data.sources.addon.AddonManifest
 import com.music.bitchord.data.sources.addon.AddonNotFound
 import com.music.bitchord.data.sources.addon.AddonStream
 import com.music.bitchord.data.sources.addon.AddonTrack
@@ -60,6 +61,38 @@ class AddonSource(
         },
     )
 
+    // ── Manifest policy ───────────────────────────────────────────────────
+
+    /** The stored config as it is now: the manifest switches change without this source being rebuilt. */
+    private val live: SourceConfig get() = SourceRegistry.config(config.id) ?: config
+
+    /**
+     * True while this addon asked for a lossless output (`checkValidLossless`)
+     * and none is connected. Checked before every request this class makes —
+     * [SourceRegistry.active] already leaves the addon out of the walks, but a
+     * queued track names its source directly and arrives here regardless.
+     */
+    private fun shutOut(what: String): Boolean {
+        if (!live.awaitsLosslessOutput) return false
+        TrackLog.d(TAG, "${config.displayName}: no lossless output connected; not asking it for $what")
+        return true
+    }
+
+    /**
+     * [shutOut], then the manifest's current answer, then [shutOut] again — so
+     * an addon that has just turned the switch on is stopped before the request
+     * rather than after it. The manifest is the client's shared, cached copy,
+     * which the request was about to read for its settings anyway.
+     */
+    private suspend fun admitted(what: String): Boolean {
+        if (shutOut(what)) return false
+        client.manifest().getOrNull()?.let(::recordPolicy)
+        return !shutOut(what)
+    }
+
+    private fun recordPolicy(manifest: AddonManifest) =
+        SourceRegistry.updatePolicy(config.id, manifest.downloadsAllowed, manifest.requiresLosslessOutput)
+
     // ── Health ────────────────────────────────────────────────────────────
 
     /**
@@ -76,8 +109,12 @@ class AddonSource(
         if (config.baseUrl.isBlank()) {
             return@withContext SourceHealth.Rejected("An addon URL is required")
         }
+        if (shutOut("a health check")) {
+            return@withContext SourceHealth.Rejected(NEEDS_LOSSLESS_OUTPUT)
+        }
         client.manifest().fold(
             onSuccess = { manifest ->
+                recordPolicy(manifest)
                 SourceHealth.Ok(
                     listOfNotNull(
                         manifest.displayName.takeIf { it.isNotBlank() },
@@ -120,7 +157,7 @@ class AddonSource(
      * this reads what the probe already fetched.
      */
     suspend fun manifestName(): String? =
-        client.manifest().getOrNull()?.displayName?.ifBlank { null }
+        if (shutOut("its name")) null else client.manifest().getOrNull()?.displayName?.ifBlank { null }
 
     // ── Search ────────────────────────────────────────────────────────────
 
@@ -129,21 +166,33 @@ class AddonSource(
      *
      * [waitForAll] is ignored, and has nothing here to mean: it exists so a
      * background pass can wait out the slow plugin in a module index, and an
-     * addon is a single call whose entire cost is one HTTP round trip. The
-     * addon is asked at the tier the app would want at best — a search is
-     * where a row's advertised quality is read, and asking at a capped tier
-     * would have a tier-aware catalogue describe rows it was never going to be
-     * asked for.
+     * addon is a single call whose entire cost is one HTTP round trip.
+     *
+     * The tier is [request]'s when a stream is what this search is for, and
+     * lossless otherwise. Asking at the tier that will actually be streamed is
+     * the point: a tier-aware catalogue describes its rows differently per
+     * tier, and a metered listener searching for something to play at 128kbps
+     * was being handed rows advertising a FLAC this app was never going to ask
+     * that addon for — ranked on a quality claim that would not survive the
+     * `/stream` call. A search with no request behind it is the search box,
+     * where the best the catalogue holds is exactly what should be shown.
      *
      * The order is left exactly as it arrived.
      * [TrackMatcher][com.music.bitchord.data.sources.TrackMatcher] decides which
      * rows are the recording and [SourceResolver] decides which to open; an
      * addon knows its own catalogue better than a re-sort here would.
      */
-    override suspend fun search(query: String, limit: Int, waitForAll: Boolean): List<Song> =
+    override suspend fun search(
+        query: String,
+        limit: Int,
+        waitForAll: Boolean,
+        request: StreamRequest?,
+    ): List<Song> =
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext emptyList()
-            val tracks = client.search(query, AddonClient.TIER_LOSSLESS).getOrElse { failure ->
+            if (!admitted("a search")) return@withContext emptyList()
+            val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
+            val tracks = client.search(query, tier).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
                 return@withContext emptyList()
             }
@@ -161,7 +210,17 @@ class AddonSource(
                         durationText = track.durationSec?.let {
                             "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}"
                         },
-                        sourceQuality = ModuleSource.qualityTier("${track.audioQuality} ${track.format}"),
+                        // Atmos is read before the tier label and not from it.
+                        // Tidal publishes its immersive rows as
+                        // `audioQuality: LOW`, so a row scored on that label
+                        // alone sorts the one mix the listener turned Atmos on
+                        // for *below* every stereo row — see
+                        // [AddonTrack.isDolbyAtmos].
+                        sourceQuality = if (track.isDolbyAtmos) {
+                            ModuleSource.DOLBY
+                        } else {
+                            ModuleSource.qualityTier("${track.audioQuality} ${track.format}")
+                        },
                     )
                 }
                 .toList()
@@ -171,6 +230,7 @@ class AddonSource(
 
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
         withContext(Dispatchers.IO) {
+            if (!admitted("a stream")) return@withContext null
             val tier = request.tier
             val result = client.stream(trackId, tier)
             val answer = result.getOrNull()
@@ -340,8 +400,17 @@ class AddonSource(
         client.clear()
     }
 
+    /** Forces the next completed track lookup back onto the network. */
+    fun clearCompletedTrackCalls() {
+        client.clearCompletedTrackCalls()
+    }
+
     private companion object {
         const val TAG = "BitChord"
+
+        /** What a gated addon's health says, for the editor's Test line. The sources list draws its own. */
+        const val NEEDS_LOSSLESS_OUTPUT =
+            "This addon only works with a lossless output — use a lossless supported device"
 
         /** How many search rows to remember. A long queue's worth, several times over. */
         const val MAX_ROWS = 256

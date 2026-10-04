@@ -49,7 +49,12 @@ class YouTubeSource(
      * these queries and they must not be recorded to the account's
      * server-side search history.
      */
-    override suspend fun search(query: String, limit: Int, waitForAll: Boolean): List<Song> =
+    override suspend fun search(
+        query: String,
+        limit: Int,
+        waitForAll: Boolean,
+        request: StreamRequest?,
+    ): List<Song> =
         YtMusicRepository.searchAnonymous(query, SearchFilter.SONGS)
             .getOrDefault(emptyList())
             .filterIsInstance<SearchResult.Track>()
