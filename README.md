@@ -11,18 +11,15 @@
 
 <br/>
 
-[![Latest release](https://img.shields.io/github/v/release/kushagrasinghx/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/releases)
-[![License](https://img.shields.io/github/license/kushagrasinghx/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/blob/main/LICENSE)
-[![Downloads](https://img.shields.io/github/downloads/kushagrasinghx/BitChord/total?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/releases)
+[![Latest release](https://img.shields.io/github/v/release/Rishav-sy/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/Rishav-sy/BitChord/releases)
+[![License](https://img.shields.io/github/license/Rishav-sy/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/Rishav-sy/BitChord/blob/v1.5.2/LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/Rishav-sy/BitChord/total?style=for-the-badge&labelColor=0d1117)](https://github.com/Rishav-sy/BitChord/releases)
 
 <br/>
 
 [**Download**](#download) · [**Features**](#features) · [**Support**](#support) · [**Disclaimer**](#disclaimer)
 
 <br/>
-
-<a href="https://trendshift.io/repositories/177639?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-177639" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/177639/daily?language=Kotlin" alt="kushagrasinghx%2FBitChord | Trendshift" width="250" height="55"/></a>
-<a href="https://trendshift.io/repositories/177639?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-177639" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/177639/weekly?language=Kotlin" alt="kushagrasinghx%2FBitChord | Trendshift" width="250" height="55"/></a>
 
 </div>
 
@@ -43,7 +40,8 @@
 
 #### Playback
 - **Search, browse and play** anything available on YouTube Music.
-- **Hi-Res lossless audio** — FLAC/ALAC from a configured module source, with YouTube Music as fallback.
+- **Hi-Res Lossless Audio Priority** — Native lossless resolution from Tidal, Qobuz, and Deezer, with fast JioSaavn 320kbps AAC and YouTube Music fallback.
+- **Zero-Stutter Race Logic** — Immediate FLAC playback with concurrent streaming resolution.
 - **Gapless playback with true crossfade**, adjustable 0–12s.
 - **Automix [Beta]** — DJ-style transitions with beat-matching and tempo-stretching.
 - **Offline downloads** — save tracks with embedded metadata.
@@ -63,7 +61,8 @@
 - **Sign in with your Google account** for personalized content.
 - **Discord Rich Presence** — in-app login, live track/artist/album and progress.
 - **Scrobbling** to Last.fm and ListenBrainz.
-- **Pluggable sources** — add, edit, test and health-check module sources.
+- **Dual-Channel In-App Updates** — Check official and personal fork update channels right from Settings.
+- **Pluggable sources** — Tidal, Qobuz, Deezer, JioSaavn, and custom modules.
 
 #### Controls & Tweaks
 - **Per-network audio quality** — separate quality ceilings for Wi-Fi and mobile data.
@@ -84,7 +83,7 @@
 
 <h1><a id="download"></a>Download</h1>
 
-Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
+Grab the latest signed APK from the [Releases](https://github.com/Rishav-sy/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
 
 </div>
 
