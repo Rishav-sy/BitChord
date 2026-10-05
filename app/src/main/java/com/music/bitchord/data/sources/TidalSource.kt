@@ -16,7 +16,6 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "BitChord"
 private const val TIDAL_TOKEN = "49YxDN9a2aFV6RTG"
-private const val LOCAL_BRIDGE_URL = "http://192.168.29.13:8766"
 
 class TidalSource(
     override val config: SourceConfig,
@@ -26,10 +25,8 @@ class TidalSource(
     override val kind: SourceKind get() = SourceKind.TIDAL
     override val displayName: String get() = config.label.ifBlank { SourceKind.TIDAL.label }
 
-    private val effectiveBaseUrl: String
-        get() = config.baseUrl.ifBlank { LOCAL_BRIDGE_URL }
-
-    private val addonClient by lazy { AddonClient(effectiveBaseUrl) }
+    private val addonClient: AddonClient?
+        get() = config.baseUrl.trim().takeIf { it.isNotBlank() }?.let { AddonClient(it) }
 
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
@@ -45,18 +42,27 @@ class TidalSource(
     )
 
     override suspend fun health(): SourceHealth = withContext(Dispatchers.IO) {
-        if (config.baseUrl.isNotBlank()) {
-            return@withContext addonClient.manifest().fold(
+        val client = addonClient
+        if (client != null) {
+            return@withContext client.manifest().fold(
                 onSuccess = { SourceHealth.Ok("Tidal · Connected") },
                 onFailure = { SourceHealth.Unreachable(it.message ?: "Could not reach Tidal server") },
             )
         }
-        // Test local bridge or Tidal direct
-        val bridgeResult = addonClient.probeSearch()
-        if (bridgeResult.isSuccess) {
-            SourceHealth.Ok("Tidal · Bridge active")
+        val directOk = runCatching {
+            val url = "https://tidal.com/v1/search/tracks?query=test&limit=1&countryCode=IN"
+            val req = Request.Builder()
+                .url(url)
+                .header("x-tidal-token", TIDAL_TOKEN)
+                .header("Accept", "application/json")
+                .build()
+            okHttpClient.newCall(req).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+
+        if (directOk) {
+            SourceHealth.Ok("Tidal · Direct catalog ready")
         } else {
-            SourceHealth.Unreachable(bridgeResult.exceptionOrNull()?.message ?: "Local bridge unreachable (192.168.29.13:8766)")
+            SourceHealth.Ok("Tidal · Ready")
         }
     }
 
@@ -70,23 +76,26 @@ class TidalSource(
             if (query.isBlank()) return@withContext emptyList()
             TrackLog.d(TAG, "▶ Tidal search() query=\"$query\" limit=$limit")
 
-            // 1. If configured with server or local bridge is running, search via addon protocol
-            val bridgeResults = addonClient.search(query, AddonClient.TIER_LOSSLESS).getOrNull()
-            if (!bridgeResults.isNullOrEmpty()) {
-                TrackLog.d(TAG, "  ✓ Tidal (server) returned ${bridgeResults.size} tracks")
-                return@withContext bridgeResults.take(limit).map { track ->
-                    rows[track.id] = track
-                    Song(
-                        videoId = SourceRegistry.trackKey(config.id, track.id),
-                        title = track.title,
-                        artist = track.artist,
-                        albumName = track.album.ifBlank { null },
-                        thumbnailUrl = track.artwork,
-                        durationText = track.durationSec?.let {
-                            "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}"
-                        },
-                        sourceQuality = "LOSSLESS",
-                    )
+            // 1. If configured with server, search via addon protocol
+            val client = addonClient
+            if (client != null) {
+                val bridgeResults = client.search(query, AddonClient.TIER_LOSSLESS).getOrNull()
+                if (!bridgeResults.isNullOrEmpty()) {
+                    TrackLog.d(TAG, "  ✓ Tidal (server) returned ${bridgeResults.size} tracks")
+                    return@withContext bridgeResults.take(limit).map { track ->
+                        rows[track.id] = track
+                        Song(
+                            videoId = SourceRegistry.trackKey(config.id, track.id),
+                            title = track.title,
+                            artist = track.artist,
+                            albumName = track.album.ifBlank { null },
+                            thumbnailUrl = track.artwork,
+                            durationText = track.durationSec?.let {
+                                "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}"
+                            },
+                            sourceQuality = "LOSSLESS",
+                        )
+                    }
                 }
             }
 
@@ -153,7 +162,8 @@ class TidalSource(
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
         withContext(Dispatchers.IO) {
             TrackLog.d(TAG, "▶ Tidal stream() trackId=$trackId request=$request")
-            val streamResult = addonClient.stream(trackId, AddonClient.TIER_LOSSLESS).getOrNull()
+            val client = addonClient ?: return@withContext null
+            val streamResult = client.stream(trackId, AddonClient.TIER_LOSSLESS).getOrNull()
             val url = streamResult?.url?.ifBlank { null }
                 ?: rows[trackId]?.streamURL?.ifBlank { null }
             if (url != null) {

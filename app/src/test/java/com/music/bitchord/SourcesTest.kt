@@ -598,32 +598,32 @@ class SourcesTest {
     }
 
     @Test
-    fun `JioSaavn is off by default on a fresh install`() {
-        assertFalse(SourceConfig(kind = SourceKind.JIOSAAVN).enabled)
-        val sources = SourceRegistry.sourcesForInit(emptyList(), forceJioSaavnOff = true)
+    fun `JioSaavn is on by default on a fresh install`() {
+        assertTrue(SourceConfig(kind = SourceKind.JIOSAAVN).enabled)
+        val sources = SourceRegistry.sourcesForInit(emptyList(), enableJioSaavn = true)
 
-        assertFalse(sources.single { it.kind == SourceKind.JIOSAAVN }.enabled)
+        assertTrue(sources.single { it.kind == SourceKind.JIOSAAVN }.enabled)
         assertTrue(sources.single { it.kind == SourceKind.YOUTUBE }.enabled)
     }
 
     @Test
-    fun `the opt-in migration disables JioSaavn once for existing installs`() {
-        val previouslyEnabled = SourceConfig(kind = SourceKind.JIOSAAVN, enabled = true)
+    fun `the migration enables JioSaavn for existing installs`() {
+        val previouslyDisabled = SourceConfig(kind = SourceKind.JIOSAAVN, enabled = false)
 
         val migrated = SourceRegistry.sourcesForInit(
-            listOf(previouslyEnabled),
-            forceJioSaavnOff = true,
+            listOf(previouslyDisabled),
+            enableJioSaavn = true,
         )
-        assertFalse(migrated.single { it.kind == SourceKind.JIOSAAVN }.enabled)
+        assertTrue(migrated.single { it.kind == SourceKind.JIOSAAVN }.enabled)
 
-        val userEnabledAgain = migrated.map {
-            if (it.kind == SourceKind.JIOSAAVN) it.copy(enabled = true) else it
+        val userDisabled = migrated.map {
+            if (it.kind == SourceKind.JIOSAAVN) it.copy(enabled = false) else it
         }
         val nextLaunch = SourceRegistry.sourcesForInit(
-            userEnabledAgain,
-            forceJioSaavnOff = false,
+            userDisabled,
+            enableJioSaavn = false,
         )
-        assertTrue(nextLaunch.single { it.kind == SourceKind.JIOSAAVN }.enabled)
+        assertFalse(nextLaunch.single { it.kind == SourceKind.JIOSAAVN }.enabled)
     }
 
     @Test

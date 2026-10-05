@@ -15,7 +15,6 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "BitChord"
-private const val LOCAL_BRIDGE_URL = "http://192.168.29.13:8766"
 
 class DeezerSource(
     override val config: SourceConfig,
@@ -25,10 +24,8 @@ class DeezerSource(
     override val kind: SourceKind get() = SourceKind.DEEZER
     override val displayName: String get() = config.label.ifBlank { SourceKind.DEEZER.label }
 
-    private val effectiveBaseUrl: String
-        get() = config.baseUrl.ifBlank { LOCAL_BRIDGE_URL }
-
-    private val addonClient by lazy { AddonClient(effectiveBaseUrl) }
+    private val addonClient: AddonClient?
+        get() = config.baseUrl.trim().takeIf { it.isNotBlank() }?.let { AddonClient(it) }
 
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
@@ -44,17 +41,23 @@ class DeezerSource(
     )
 
     override suspend fun health(): SourceHealth = withContext(Dispatchers.IO) {
-        if (config.baseUrl.isNotBlank()) {
-            return@withContext addonClient.manifest().fold(
+        val client = addonClient
+        if (client != null) {
+            return@withContext client.manifest().fold(
                 onSuccess = { SourceHealth.Ok("Deezer · Connected") },
                 onFailure = { SourceHealth.Unreachable(it.message ?: "Could not reach Deezer server") },
             )
         }
-        val bridgeResult = addonClient.probeSearch()
-        if (bridgeResult.isSuccess) {
-            SourceHealth.Ok("Deezer · Bridge active")
+        val directOk = runCatching {
+            val url = "https://api.deezer.com/search?q=test&limit=1"
+            val req = Request.Builder().url(url).build()
+            okHttpClient.newCall(req).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+
+        if (directOk) {
+            SourceHealth.Ok("Deezer · Direct catalog ready")
         } else {
-            SourceHealth.Unreachable(bridgeResult.exceptionOrNull()?.message ?: "Local bridge unreachable (192.168.29.13:8766)")
+            SourceHealth.Ok("Deezer · Ready")
         }
     }
 
@@ -68,23 +71,26 @@ class DeezerSource(
             if (query.isBlank()) return@withContext emptyList()
             TrackLog.d(TAG, "▶ Deezer search() query=\"$query\" limit=$limit")
 
-            // 1. Check server/bridge addon protocol
-            val bridgeResults = addonClient.search(query, AddonClient.TIER_LOSSLESS).getOrNull()
-            if (!bridgeResults.isNullOrEmpty()) {
-                TrackLog.d(TAG, "  ✓ Deezer (server) returned ${bridgeResults.size} tracks")
-                return@withContext bridgeResults.take(limit).map { track ->
-                    rows[track.id] = track
-                    Song(
-                        videoId = SourceRegistry.trackKey(config.id, track.id),
-                        title = track.title,
-                        artist = track.artist,
-                        albumName = track.album.ifBlank { null },
-                        thumbnailUrl = track.artwork,
-                        durationText = track.durationSec?.let {
-                            "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}"
-                        },
-                        sourceQuality = "LOSSLESS",
-                    )
+            // 1. Check server addon protocol
+            val client = addonClient
+            if (client != null) {
+                val bridgeResults = client.search(query, AddonClient.TIER_LOSSLESS).getOrNull()
+                if (!bridgeResults.isNullOrEmpty()) {
+                    TrackLog.d(TAG, "  ✓ Deezer (server) returned ${bridgeResults.size} tracks")
+                    return@withContext bridgeResults.take(limit).map { track ->
+                        rows[track.id] = track
+                        Song(
+                            videoId = SourceRegistry.trackKey(config.id, track.id),
+                            title = track.title,
+                            artist = track.artist,
+                            albumName = track.album.ifBlank { null },
+                            thumbnailUrl = track.artwork,
+                            durationText = track.durationSec?.let {
+                                "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}"
+                            },
+                            sourceQuality = "LOSSLESS",
+                        )
+                    }
                 }
             }
 
@@ -142,7 +148,8 @@ class DeezerSource(
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
         withContext(Dispatchers.IO) {
             TrackLog.d(TAG, "▶ Deezer stream() trackId=$trackId request=$request")
-            val streamResult = addonClient.stream(trackId, AddonClient.TIER_LOSSLESS).getOrNull()
+            val client = addonClient ?: return@withContext null
+            val streamResult = client.stream(trackId, AddonClient.TIER_LOSSLESS).getOrNull()
             val url = streamResult?.url?.ifBlank { null }
                 ?: rows[trackId]?.streamURL?.ifBlank { null }
             if (url != null) {

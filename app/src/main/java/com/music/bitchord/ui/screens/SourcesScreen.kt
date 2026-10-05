@@ -257,11 +257,7 @@ fun SourcesScreen(
                             null
                         } else {
                             ({ enabled ->
-                                if (config.kind == SourceKind.JIOSAAVN && enabled && !config.enabled) {
-                                    onConfirmJioSaavn()
-                                } else {
-                                    SourceRegistry.setEnabled(config.id, enabled)
-                                }
+                                SourceRegistry.setEnabled(config.id, enabled)
                             })
                         },
                         handle = handle,

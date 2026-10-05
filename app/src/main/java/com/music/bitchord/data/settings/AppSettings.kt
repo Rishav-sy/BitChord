@@ -105,13 +105,6 @@ enum class UpdateChannel(val label: String, val detail: String) {
     BOTH("Both Channels", "Check official releases and your personal fork"),
 }
 
-/** CPU budget for Automix's background analysis, not its audible mix algorithm. */
-enum class AutomixPerformanceMode(val inferenceThreads: Int) {
-    EFFICIENT(1),
-    BALANCED(2),
-    PERFORMANCE(4),
-}
-
 /**
  * Which of the equaliser's two tabs is driving the sound.
  *

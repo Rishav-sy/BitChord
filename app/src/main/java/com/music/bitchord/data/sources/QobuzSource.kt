@@ -10,7 +10,6 @@ import java.util.Collections
 import java.util.Locale
 
 private const val TAG = "BitChord"
-private const val LOCAL_BRIDGE_URL = "http://192.168.29.13:8766"
 
 class QobuzSource(
     override val config: SourceConfig,
@@ -20,10 +19,8 @@ class QobuzSource(
     override val kind: SourceKind get() = SourceKind.QOBUZ
     override val displayName: String get() = config.label.ifBlank { SourceKind.QOBUZ.label }
 
-    private val effectiveBaseUrl: String
-        get() = config.baseUrl.ifBlank { LOCAL_BRIDGE_URL }
-
-    private val addonClient by lazy { AddonClient(effectiveBaseUrl) }
+    private val addonClient: AddonClient?
+        get() = config.baseUrl.trim().takeIf { it.isNotBlank() }?.let { AddonClient(it) }
 
     private val rows = Collections.synchronizedMap(
         object : LinkedHashMap<String, AddonTrack>(64, 0.75f, true) {
@@ -32,18 +29,14 @@ class QobuzSource(
     )
 
     override suspend fun health(): SourceHealth = withContext(Dispatchers.IO) {
-        if (config.baseUrl.isNotBlank()) {
-            return@withContext addonClient.manifest().fold(
+        val client = addonClient
+        if (client != null) {
+            return@withContext client.manifest().fold(
                 onSuccess = { SourceHealth.Ok("Qobuz · Connected") },
                 onFailure = { SourceHealth.Unreachable(it.message ?: "Could not reach Qobuz server") },
             )
         }
-        val bridgeResult = addonClient.probeSearch()
-        if (bridgeResult.isSuccess) {
-            SourceHealth.Ok("Qobuz · Bridge active")
-        } else {
-            SourceHealth.Unreachable(bridgeResult.exceptionOrNull()?.message ?: "Local bridge unreachable (192.168.29.13:8766)")
-        }
+        SourceHealth.Ok("Qobuz · Ready")
     }
 
     override suspend fun search(
@@ -56,7 +49,8 @@ class QobuzSource(
             if (query.isBlank()) return@withContext emptyList()
             TrackLog.d(TAG, "▶ Qobuz search() query=\"$query\" limit=$limit")
 
-            val tracks = addonClient.search(query, AddonClient.TIER_LOSSLESS).getOrNull()
+            val client = addonClient ?: return@withContext emptyList()
+            val tracks = client.search(query, AddonClient.TIER_LOSSLESS).getOrNull()
             if (tracks.isNullOrEmpty()) return@withContext emptyList()
 
             TrackLog.d(TAG, "  ✓ Qobuz returned ${tracks.size} tracks")
@@ -79,7 +73,8 @@ class QobuzSource(
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
         withContext(Dispatchers.IO) {
             TrackLog.d(TAG, "▶ Qobuz stream() trackId=$trackId request=$request")
-            val streamResult = addonClient.stream(trackId, AddonClient.TIER_LOSSLESS).getOrNull()
+            val client = addonClient ?: return@withContext null
+            val streamResult = client.stream(trackId, AddonClient.TIER_LOSSLESS).getOrNull()
             val url = streamResult?.url?.ifBlank { null }
                 ?: rows[trackId]?.streamURL?.ifBlank { null }
             if (url != null) {
