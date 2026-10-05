@@ -52,11 +52,11 @@ class TidalSource(
             )
         }
         // Test local bridge or Tidal direct
-        val bridgeOk = addonClient.probeSearch().isSuccess
-        if (bridgeOk) {
+        val bridgeResult = addonClient.probeSearch()
+        if (bridgeResult.isSuccess) {
             SourceHealth.Ok("Tidal · Bridge active")
         } else {
-            SourceHealth.Ok("Tidal · Ready")
+            SourceHealth.Unreachable(bridgeResult.exceptionOrNull()?.message ?: "Local bridge unreachable (192.168.29.13:8766)")
         }
     }
 

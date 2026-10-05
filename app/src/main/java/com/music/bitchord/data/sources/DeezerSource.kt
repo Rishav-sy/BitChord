@@ -50,11 +50,11 @@ class DeezerSource(
                 onFailure = { SourceHealth.Unreachable(it.message ?: "Could not reach Deezer server") },
             )
         }
-        val bridgeOk = addonClient.probeSearch().isSuccess
-        if (bridgeOk) {
+        val bridgeResult = addonClient.probeSearch()
+        if (bridgeResult.isSuccess) {
             SourceHealth.Ok("Deezer · Bridge active")
         } else {
-            SourceHealth.Ok("Deezer · Ready")
+            SourceHealth.Unreachable(bridgeResult.exceptionOrNull()?.message ?: "Local bridge unreachable (192.168.29.13:8766)")
         }
     }
 

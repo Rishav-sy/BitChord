@@ -145,10 +145,11 @@ fun SourcesScreen(
     // was any good, and the only place a manifest that fails validation gets to
     // say why. Except an addon waiting on a lossless output: it is not to be
     // contacted at all until one is connected, and connecting one re-runs this.
-    val probeKey = configs.filter { it.kind.needsServer }
+    val isBuiltInLossless: (SourceConfig) -> Boolean = { it.kind in listOf(SourceKind.TIDAL, SourceKind.QOBUZ, SourceKind.DEEZER) }
+    val probeKey = configs.filter { it.kind.needsServer || isBuiltInLossless(it) }
         .joinToString { "${it.id}@${it.baseUrl}@${it.checkValidLossless}" } + "@${losslessOutput.capable}"
     LaunchedEffect(probeKey) {
-        configs.filter { it.kind.needsServer && it.isComplete && !it.awaitsLosslessOutput }.forEach { config ->
+        configs.filter { (it.kind.needsServer || isBuiltInLossless(it)) && it.isComplete && !it.awaitsLosslessOutput }.forEach { config ->
             val source = SourceRegistry.instance(config.id) ?: return@forEach
             health[config.id] = withContext(Dispatchers.IO) {
                 runCatching { source.health() }

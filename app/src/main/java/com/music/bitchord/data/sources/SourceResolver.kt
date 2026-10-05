@@ -683,7 +683,8 @@ object SourceResolver {
      */
     fun sameRecordingAs(candidateSec: Int?, playingSec: Int?): Boolean {
         if (candidateSec == null || playingSec == null) return false
-        return kotlin.math.abs(candidateSec - playingSec) <= UPGRADE_DRIFT_SEC
+        val slack = AppSettings.upgradeLengthSlackSeconds.value.coerceAtLeast(UPGRADE_DRIFT_SEC)
+        return kotlin.math.abs(candidateSec - playingSec) <= slack
     }
 
     /**
@@ -913,7 +914,8 @@ object SourceResolver {
             // nothing else is worth cutting a listener's audio for — or filing
             // on their device under the name of the track they asked for.
             if (strictLength) {
-                matches = matches.filter { TrackMatcher.withinSeconds(it, target, UPGRADE_DRIFT_SEC) }
+                val slack = AppSettings.upgradeLengthSlackSeconds.value.coerceAtLeast(UPGRADE_DRIFT_SEC)
+                matches = matches.filter { TrackMatcher.withinSeconds(it, target, slack) }
             }
             if (matches.isEmpty()) continue
             return streamBest(source, matches, target, request)

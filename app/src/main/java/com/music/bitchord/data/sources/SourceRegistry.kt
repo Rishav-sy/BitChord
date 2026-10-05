@@ -382,9 +382,9 @@ object SourceRegistry {
         return when (detected) {
             is DetectedFormat.Addon -> Result.success(
                 (existing ?: SourceConfig(kind = SourceKind.ADDON)).copy(
-                    kind = SourceKind.ADDON,
+                    kind = if (existing != null && existing.kind in BUILT_IN_KINDS) existing.kind else SourceKind.ADDON,
                     baseUrl = detected.baseUrl,
-                    label = detected.manifest.displayName,
+                    label = if (existing != null && existing.kind in BUILT_IN_KINDS && existing.label.isNotBlank()) existing.label else detected.manifest.displayName,
                     allowDownloads = detected.manifest.downloadsAllowed,
                     checkValidLossless = detected.manifest.requiresLosslessOutput,
                 ),
