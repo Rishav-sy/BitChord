@@ -123,7 +123,7 @@ android {
         }
         create("prod") {
             dimension = "env"
-            // Matches defaultConfig — this is the package already shipped/installed.
+            applicationId = "com.music.bitchord.lossless"
         }
     }
 

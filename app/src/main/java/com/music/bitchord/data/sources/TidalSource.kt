@@ -60,7 +60,12 @@ class TidalSource(
         }
     }
 
-    override suspend fun search(query: String, limit: Int, waitForAll: Boolean): List<Song> =
+    override suspend fun search(
+        query: String,
+        limit: Int,
+        waitForAll: Boolean,
+        request: StreamRequest?,
+    ): List<Song> =
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext emptyList()
             TrackLog.d(TAG, "▶ Tidal search() query=\"$query\" limit=$limit")

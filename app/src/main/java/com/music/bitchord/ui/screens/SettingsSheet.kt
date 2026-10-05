@@ -1403,7 +1403,6 @@ fun SettingsScreen(
             MessageState(stringResource(R.string.settings_search_empty, searchQuery))
         }
 
-<<<<<<< HEAD
         SettingsGroup(header = "Updates") {
             SettingsRow(
                 icon = Icons.Rounded.Sync,
