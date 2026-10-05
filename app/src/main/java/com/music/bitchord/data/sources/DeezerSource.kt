@@ -15,7 +15,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "BitChord"
-private const val LOCAL_BRIDGE_URL = "http://127.0.0.1:8766"
+private const val LOCAL_BRIDGE_URL = "http://192.168.29.13:8766"
 
 class DeezerSource(
     override val config: SourceConfig,
