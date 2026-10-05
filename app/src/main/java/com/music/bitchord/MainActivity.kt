@@ -253,6 +253,7 @@ import com.music.bitchord.ui.components.ServerEditorHost
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.components.WebDavConflictAlert
 import com.music.bitchord.ui.components.FieldConfig
+import com.music.bitchord.ui.components.SourceInfoAlert
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
@@ -555,6 +556,7 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
+    var infoSource by remember { mutableStateOf<SourceConfig?>(null) }
     var confirmJioSaavn by remember { mutableStateOf(false) }
     var editingPartyServer by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
@@ -2460,6 +2462,7 @@ private fun BitChordApp(
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
         BackHandler(enabled = editingSource != null) { editingSource = null }
+        BackHandler(enabled = infoSource != null) { infoSource = null }
         BackHandler(enabled = editingPartyServer) { editingPartyServer = false }
         BackHandler(enabled = showHistory) { showHistory = false }
         // Disabled while a detail page is open over the grid: that one's own
@@ -2692,6 +2695,7 @@ private fun BitChordApp(
                         SourcesScreen(
                             contentPadding = listPadding,
                             onEditSource = { editingSource = it },
+                            onShowSourceInfo = { infoSource = it },
                             onEditWebDav = { showWebDavEditor = true },
                             onEditSmb = { showSmbEditor = true },
                             onConfirmJioSaavn = { confirmJioSaavn = true },
@@ -3263,6 +3267,7 @@ private fun BitChordApp(
                             SourcesScreen(
                                 contentPadding = listPadding,
                                 onEditSource = { editingSource = it },
+                                onShowSourceInfo = { infoSource = it },
                                 onEditWebDav = { showWebDavEditor = true },
                                 onEditSmb = { showSmbEditor = true },
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
@@ -5030,6 +5035,20 @@ private fun BitChordApp(
                     editingSource = null
                 },
                 scope = scope,
+            )
+        }
+
+        infoSource?.let { config ->
+            SourceInfoAlert(
+                hazeState = hazeState,
+                config = config,
+                onDismiss = { infoSource = null },
+                onEditUrl = if (config.kind == SourceKind.ADDON || config.kind == SourceKind.CUSTOM_MODULE) {
+                    {
+                        infoSource = null
+                        editingSource = config
+                    }
+                } else null,
             )
         }
 

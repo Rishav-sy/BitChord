@@ -57,6 +57,11 @@ object PoolAccountManager {
             .build()
     }
 
+    suspend fun refreshAccounts(): Boolean = withContext(Dispatchers.IO) {
+        lastFetchMs = 0L
+        ensureAccounts()
+    }
+
     suspend fun ensureAccounts(): Boolean = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         if (tidalAccounts.isNotEmpty() && (now - lastFetchMs < REFRESH_INTERVAL_MS)) {

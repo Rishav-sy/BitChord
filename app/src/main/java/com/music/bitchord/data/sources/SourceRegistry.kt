@@ -181,8 +181,13 @@ object SourceRegistry {
             // that asked for a lossless output costs nothing — not even a timed
             // out search — while there isn't one. See [SourceConfig.checkValidLossless].
             .filterNot { it.awaitsLosslessOutput }
-            .sortedBy { it.kind.rank }
             .mapNotNull { instances[it.id] }
+
+    /** Returns the 0-based priority index of a configured source. Lower is higher priority. */
+    fun priorityOf(configId: String): Int {
+        val idx = configs.value.indexOfFirst { it.id == configId }
+        return if (idx >= 0) idx else Int.MAX_VALUE
+    }
 
     /**
      * [active], minus the addons whose manifest said `allowDownloads: 0`. A
@@ -316,15 +321,19 @@ object SourceRegistry {
      * deleting the rest. Everything that is not an addon keeps its place, since
      * its rank is decided by its kind and is not the user's to set.
      */
-    fun reorderAddons(orderedIds: List<String>) {
-        val addons = configs.value.filter { it.kind.isUserAdded }
-        if (addons.size < 2) return
-        val byId = addons.associateBy { it.id }
+    fun reorderAll(orderedIds: List<String>) {
+        val current = configs.value
+        if (current.size < 2) return
+        val byId = current.associateBy { it.id }
         val moved = orderedIds.mapNotNull(byId::get)
-        val missed = addons.filterNot { config -> moved.any { it.id == config.id } }
+        val missed = current.filterNot { config -> moved.any { it.id == config.id } }
         val reordered = moved + missed
-        if (reordered.map { it.id } == addons.map { it.id }) return
-        publish(reordered + configs.value.filterNot { it.kind.isUserAdded })
+        if (reordered.map { it.id } == current.map { it.id }) return
+        publish(reordered)
+    }
+
+    fun reorderAddons(orderedIds: List<String>) {
+        reorderAll(orderedIds)
     }
 
     private fun publish(next: List<SourceConfig>, persist: Boolean = true) {

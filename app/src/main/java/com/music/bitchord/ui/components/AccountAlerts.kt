@@ -46,7 +46,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceConfig
+import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.pool.PoolAccountManager
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
@@ -849,3 +857,199 @@ internal fun AlertScaffold(
         )
     }
 }
+
+/**
+ * Detailed information alert for music sources (Tidal, Qobuz, Deezer, JioSaavn, YouTube, Addons).
+ * Displays pool accounts, streaming proxy endpoints, max formats, and native engine diagnostics.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun SourceInfoAlert(
+    hazeState: HazeState,
+    config: SourceConfig,
+    onDismiss: () -> Unit,
+    onEditUrl: (() -> Unit)? = null,
+) {
+    val scope = rememberCoroutineScope()
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshMessage by remember { mutableStateOf<String?>(null) }
+
+    var tidalCount by remember { mutableIntStateOf(PoolAccountManager.getTidalAccounts().size) }
+    var qobuzCount by remember { mutableIntStateOf(PoolAccountManager.getQobuzAccounts().size) }
+    var qobuzApiCount by remember { mutableIntStateOf(PoolAccountManager.getQobuzApis().size) }
+
+    LaunchedEffect(config.kind) {
+        if (config.kind == SourceKind.TIDAL || config.kind == SourceKind.QOBUZ) {
+            withContext(Dispatchers.IO) {
+                PoolAccountManager.ensureAccounts()
+            }
+            tidalCount = PoolAccountManager.getTidalAccounts().size
+            qobuzCount = PoolAccountManager.getQobuzAccounts().size
+            qobuzApiCount = PoolAccountManager.getQobuzApis().size
+        }
+    }
+
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = config.displayName,
+                style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp, fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+
+            val badgeText = when (config.kind) {
+                SourceKind.QOBUZ -> "24-bit / 192 kHz Hi-Res Lossless"
+                SourceKind.TIDAL -> "HiFi Lossless & Hi-Res FLAC"
+                SourceKind.DEEZER -> "16-bit 44.1 kHz FLAC (1411 kbps)"
+                SourceKind.JIOSAAVN -> "320 kbps AAC (High Quality)"
+                SourceKind.YOUTUBE -> "Opus ~160 kbps (High Efficiency)"
+                SourceKind.ADDON, SourceKind.CUSTOM_MODULE, SourceKind.MODULE -> "Custom Addon Source"
+            }
+            Box(
+                modifier = Modifier
+                    .padding(top = 6.dp, bottom = 14.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = badgeText,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            ) {
+                when (config.kind) {
+                    SourceKind.TIDAL -> {
+                        InfoRow(label = "Engine", value = "Direct Stream · On-Device FLAC")
+                        InfoRow(label = "Pool Status", value = if (tidalCount > 0) "Connected to ArchivePool" else "Connecting...")
+                        InfoRow(label = "Active Accounts", value = if (tidalCount > 0) "$tidalCount HiFi accounts in pool" else "Fetching accounts...")
+                        InfoRow(label = "Max Format", value = "FLAC 16-bit / 44.1 kHz & Hi-Res")
+                        InfoRow(label = "Bridge Required", value = "None (Fully standalone)")
+                    }
+                    SourceKind.QOBUZ -> {
+                        InfoRow(label = "Engine", value = "Direct Stream · On-Device Native MD5")
+                        InfoRow(label = "Pool Status", value = if (qobuzCount > 0) "Connected to ArchivePool" else "Connecting...")
+                        InfoRow(label = "Active Accounts", value = if (qobuzCount > 0) "$qobuzCount Studio accounts in pool" else "Fetching accounts...")
+                        InfoRow(label = "Streaming Proxies", value = if (qobuzApiCount > 0) "$qobuzApiCount API endpoints active" else "Connecting...")
+                        InfoRow(label = "Max Format", value = "24-bit / 192 kHz Studio Master FLAC")
+                        InfoRow(label = "Bridge Required", value = "None (Fully standalone)")
+                    }
+                    SourceKind.DEEZER -> {
+                        InfoRow(label = "Engine", value = "Direct Stream · On-Device Blowfish")
+                        InfoRow(label = "Max Format", value = "FLAC 1411 kbps (16-bit / 44.1 kHz)")
+                        InfoRow(label = "Fallback Format", value = "MP3 320 kbps (High Quality)")
+                        InfoRow(label = "Decryption", value = "Native 128-bit Blowfish Cipher")
+                        InfoRow(label = "Bridge Required", value = "None (Fully standalone)")
+                    }
+                    SourceKind.JIOSAAVN -> {
+                        InfoRow(label = "Provider", value = "Official JioSaavn CDN")
+                        InfoRow(label = "Audio Quality", value = "AAC 320 kbps")
+                        InfoRow(label = "Authentication", value = "None required (Public API)")
+                        InfoRow(label = "Catalog", value = "Indian & Regional Discography")
+                    }
+                    SourceKind.YOUTUBE -> {
+                        InfoRow(label = "Provider", value = "YouTube Music / Invidious")
+                        InfoRow(label = "Audio Quality", value = "Opus ~160 kbps")
+                        InfoRow(label = "Privacy", value = "Anonymous Search (Zero history pollution)")
+                        InfoRow(label = "Features", value = "Radio, Autoplay, Related Tracks, Full Catalog")
+                    }
+                    else -> {
+                        InfoRow(label = "Type", value = config.kind.label)
+                        if (config.baseUrl.isNotBlank()) {
+                            InfoRow(label = "Server", value = config.baseUrl)
+                        }
+                        InfoRow(label = "Downloads", value = if (config.allowDownloads) "Allowed" else "Streaming only")
+                        InfoRow(label = "Lossless Gated", value = if (config.checkValidLossless) "Yes (Requires output)" else "No")
+                    }
+                }
+            }
+
+            if (refreshMessage != null) {
+                Text(
+                    text = refreshMessage!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+
+        if (config.kind == SourceKind.TIDAL || config.kind == SourceKind.QOBUZ) {
+            AlertRule()
+            AlertAction(
+                label = if (refreshing) "Refreshing Pool..." else "Refresh Pool Accounts",
+                emphasised = false,
+                onClick = {
+                    if (refreshing) return@AlertAction
+                    refreshing = true
+                    refreshMessage = null
+                    scope.launch {
+                        val ok = PoolAccountManager.refreshAccounts()
+                        tidalCount = PoolAccountManager.getTidalAccounts().size
+                        qobuzCount = PoolAccountManager.getQobuzAccounts().size
+                        qobuzApiCount = PoolAccountManager.getQobuzApis().size
+                        refreshMessage = if (ok) "✓ Pool updated successfully" else "Failed to update pool"
+                        refreshing = false
+                    }
+                },
+                enabled = !refreshing,
+            )
+        }
+
+        if (onEditUrl != null) {
+            AlertRule()
+            AlertAction(
+                label = "Edit Server Address",
+                emphasised = false,
+                onClick = onEditUrl,
+            )
+        }
+
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.close),
+            emphasised = true,
+            onClick = onDismiss,
+        )
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+

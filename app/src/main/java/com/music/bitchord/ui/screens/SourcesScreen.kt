@@ -110,6 +110,7 @@ fun SourcesScreen(
      * and the mini player.
      */
     onEditSource: (SourceConfig) -> Unit,
+    onShowSourceInfo: (SourceConfig) -> Unit,
     /**
      * Asks the activity to open the WebDAV editor — raised for the same
      * reason as [onEditSource]: the frosted alert cannot be drawn from inside
@@ -155,16 +156,6 @@ fun SourcesScreen(
                 runCatching { source.health() }
                     .getOrElse { SourceHealth.Unreachable(it.message ?: "Failed") }
             }
-            // An addon names itself, so the row takes that name rather than a
-            // hostname — and rather than a field asking the user to make one up.
-            //
-            // Written here, off the probe that has just fetched the manifest
-            // anyway, because this is the one place that both talks to every
-            // configured source and is allowed to change what is stored. It
-            // settles after one pass: the next probe finds the label already
-            // equal and writes nothing, so there is no loop between this and
-            // the [configs] it is reading. A rename on the addon's side is
-            // picked up the next time this screen is opened.
             if (source is AddonSource) {
                 val named = withContext(Dispatchers.IO) { runCatching { source.manifestName() }.getOrNull() }
                 if (named != null && named != config.label) {
@@ -176,17 +167,11 @@ fun SourcesScreen(
 
     // The ceiling in force *right now*, which is the only one this screen can
     // speak for: the rows below are switches the user set once, and whether a
-    // given source is reached also depends on which connection is up. Reading
-    // it here rather than baking it into the switches is deliberate — the
-    // preset write that used to do that is what made a mobile-data rung follow
-    // the user onto Wi-Fi. See [AudioQuality.permits].
+    // given source is reached also depends on which connection is up.
     val ceiling = if (metered == true) cellularQuality else wifiQuality
 
     /** Whether the ceiling in force right now would cap a lossless stream anyway. */
     val cappedByQuality = ceiling != AudioQuality.LOSSLESS
-    // Asked of the kinds themselves rather than of the module specifically, so
-    // a source added later answers this on its own terms instead of being
-    // invisible to it.
     val anyLosslessSource = configs.any { it.enabled && it.isComplete && it.kind.canServeLossless }
 
     Column(
@@ -215,74 +200,30 @@ fun SourcesScreen(
                 }
             },
         ) {
-            // The addons are split out from the rest because they are the only
-            // rows whose order is the *user's*. Everything else ranks by kind,
-            // which is fixed in [SourceKind] and not something a drag should be
-            // able to argue with — a gesture that let JioSaavn be dragged above
-            // an addon would be offering a choice the resolver does not
-            // actually honour.
-            //
-            // They are still one continuously numbered list. The numbers say
-            // what order the sources are tried in, and restarting the count
-            // under a second heading would break the one thing this screen is
-            // for.
-            val addons = configs.filter { it.kind.isUserAdded }
-            val fixed = configs.filterNot { it.kind.isUserAdded }
-                .sortedBy { it.kind.rank }
-            val preAddonFixed = fixed.filter { it.kind.rank < SourceKind.USER_ADDED }
-            val postAddonFixed = fixed.filter { it.kind.rank > SourceKind.USER_ADDED }
-
-            val row: @Composable (Int, SourceConfig, (@Composable () -> Unit)?) -> Unit =
-                { position, config, handle ->
+            ReorderableSources(
+                sources = configs,
+                onReorder = { reordered ->
+                    SourceRegistry.reorderAll(reordered.map(SourceConfig::id))
+                },
+                row = { position, config, handle ->
                     SourceRow(
                         position = position,
                         config = config,
                         health = health[config.id],
-                        // Switched on, but not reached on this connection. Said
-                        // on the row rather than by moving the switch, so the
-                        // switch keeps meaning "I want this source" and the
-                        // connection keeps meaning "…and here is what it costs
-                        // today".
                         skippedByQuality = config.enabled && !ceiling.permits(config.kind),
                         awaitingOutput = if (config.enabled && config.awaitsLosslessOutput) losslessOutput else null,
                         onMetered = metered == true,
                         ceiling = ceiling,
-                        // Anything the user configured is theirs to edit or
-                        // delete. JioSaavn and YouTube have no address to
-                        // change, so a tap on them would open an empty editor.
-                        onClick = if (config.kind.needsServer || config.kind in listOf(SourceKind.TIDAL, SourceKind.QOBUZ, SourceKind.DEEZER)) ({ onEditSource(config) }) else null,
-                        // YouTube gets no switch at all — see
-                        // [SourceRegistry.setEnabled] for why one would be a lie.
+                        onClick = { onShowSourceInfo(config) },
                         onToggle = if (config.kind == SourceKind.YOUTUBE) {
                             null
                         } else {
-                            ({ enabled ->
-                                SourceRegistry.setEnabled(config.id, enabled)
-                            })
+                            { enabled -> SourceRegistry.setEnabled(config.id, enabled) }
                         },
                         handle = handle,
                     )
-                }
-
-            var nextPos = 1
-            preAddonFixed.forEachIndexed { index, config ->
-                if (index > 0) RowDivider()
-                row(nextPos++, config, null)
-            }
-
-            if (addons.isNotEmpty()) {
-                if (preAddonFixed.isNotEmpty()) RowDivider()
-                ReorderableAddons(
-                    addons = addons,
-                    onReorder = { SourceRegistry.reorderAddons(it.map(SourceConfig::id)) },
-                    row = { _, config, handle -> row(nextPos++, config, handle) },
-                )
-            }
-
-            postAddonFixed.forEachIndexed { index, config ->
-                if (index > 0 || preAddonFixed.isNotEmpty() || addons.isNotEmpty()) RowDivider()
-                row(nextPos++, config, null)
-            }
+                },
+            )
 
             // The one shut-out an addon can't tell apart from "not lossless":
             // headphones on LDAC or LHDC whose codec Android won't name without
@@ -475,21 +416,21 @@ private fun RemoteLibrarySection(
  * grip that cannot move anything is a control that lies.
  */
 @Composable
-private fun ReorderableAddons(
-    addons: List<SourceConfig>,
+private fun ReorderableSources(
+    sources: List<SourceConfig>,
     onReorder: (List<SourceConfig>) -> Unit,
     row: @Composable (Int, SourceConfig, (@Composable () -> Unit)?) -> Unit,
 ) {
-    if (addons.isEmpty()) return
-    if (addons.size == 1) {
-        row(1, addons.first(), null)
+    if (sources.isEmpty()) return
+    if (sources.size == 1) {
+        row(1, sources.first(), null)
         // The same trailing rule the reorderable rows below emit, so the row
         // that follows this block is separated whichever branch drew it.
         RowDivider()
         return
     }
 
-    var liveOrder by remember(addons) { mutableStateOf(addons) }
+    var liveOrder by remember(sources) { mutableStateOf(sources) }
     var dragged by remember { mutableStateOf<String?>(null) }
 
     /** Distance the finger has covered since this gesture began, in pixels. */
@@ -543,7 +484,7 @@ private fun ReorderableAddons(
                             // A constant key on purpose: the row is pinned by
                             // [key] above, so nothing about a reorder should
                             // restart this coroutine.
-                            .pointerInput(Unit) {
+                            .pointerInput(config.id) {
                                 detectDragGestures(
                                     onDragStart = {
                                         dragged = config.id
@@ -595,7 +536,7 @@ private fun ReorderableAddons(
                                     onDragCancel = {
                                         dragged = null
                                         totalDrag = 0f
-                                        liveOrder = addons
+                                        liveOrder = sources
                                     },
                                 )
                             },
