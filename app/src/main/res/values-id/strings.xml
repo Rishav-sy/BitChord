@@ -407,6 +407,10 @@
     <string name="remove_from_liked">Hapus dari Musik yang Disukai</string>
     <string name="remove_from_playlist">Hapus dari playlist ini</string>
     <string name="rename_playlist">Ganti nama playlist</string>
+    <string name="reorder_songs">Atur ulang urutan lagu</string>
+    <string name="reorder_failed">Tidak dapat menyimpan urutan baru</string>
+    <string name="playlist_reordered">Urutan playlist disimpan</string>
+    <string name="save_order">Simpan</string>
     <string name="reset_to_default">Setel ulang ke default</string>
     <string name="rich_presence_footer">Tampilkan apa yang sedang Anda putar di profil Discord Anda.</string>
     <string name="save_name">Simpan nama</string>
@@ -1192,6 +1196,12 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Ditambahkan ke playlist</string>
     <string name="song_already_in_playlist">Sudah ada di playlist</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="other">Tambahkan ke %1$d playlist</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="other">Ditambahkan ke %1$d playlist</item>
+    </plurals>
     <string name="party_queue_full">Antrean penuh (maksimal %d lagu di pesta)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
@@ -1225,4 +1235,34 @@
     <string name="song_cache_unlimited_subtitle">Tanpa batas. Audio dalam cache bisa terus bertambah hingga penyimpanan penuh.</string>
     <string name="clear_song_cache_title">Hapus cache lagu?</string>
     <string name="clear_song_cache_warning">Semua lagu dalam cache akan dihapus dan folder lagu dalam cache akan dikosongkan. Lagu akan di-streaming lagi saat diputar berikutnya.</string>
+    <string name="import_spotify">Impor dari Spotify</string>
+    <string name="import_spotify_subtitle">Dari tautan playlist</string>
+    <string name="local_playlist_subtitle">%1$d lagu · Di perangkat ini</string>
+    <string name="lossless_output_permission_denied">Izin perangkat terdekat nonaktif</string>
+    <string name="lossless_output_permission_denied_detail">Ketuk untuk membuka Pengaturan dan mengizinkan perangkat terdekat — tanpa itu codec Bluetooth Anda tidak bisa dibaca</string>
+    <string name="recent_album">Album Terbaru</string>
+    <string name="recent_ep">EP Terbaru</string>
+    <string name="recent_single">Single Terbaru</string>
+    <string name="spotify">Spotify</string>
+    <string name="spotify_connect_subtitle">Masuk untuk memuat playlist Anda. Pemutaran memakai YouTube Music.</string>
+    <string name="spotify_disconnect">Putuskan</string>
+    <string name="spotify_empty_playlists">Tidak ada playlist di akun ini</string>
+    <string name="spotify_empty_tracks">Playlist ini tidak punya lagu</string>
+    <string name="spotify_import_button">Impor</string>
+    <string name="spotify_import_description">Tempelkan tautan playlist publik. Lagu dicocokkan di YouTube Music.</string>
+    <string name="spotify_import_description_local">Tempelkan tautan playlist publik. Lagu dicocokkan di YouTube Music dan disimpan di perangkat ini.</string>
+    <string name="spotify_import_done">‘%1$s’ diimpor</string>
+    <string name="spotify_import_empty_playlist">Tidak ada lagu di playlist ini</string>
+    <string name="spotify_import_failed">Gagal mengimpor playlist: %1$s</string>
+    <string name="spotify_import_fetching">Membaca playlist Spotify…</string>
+    <string name="spotify_import_hint">open.spotify.com/playlist/…</string>
+    <string name="spotify_import_invalid">Itu bukan tautan playlist Spotify.</string>
+    <string name="spotify_import_local_fallback">Tidak bisa dibuat di YouTube Music, jadi ‘%1$s’ disimpan di perangkat ini.</string>
+    <string name="spotify_import_matching">Mencocokkan lagu %1$d dari %2$d</string>
+    <string name="spotify_import_none">Tidak ada lagu itu yang ditemukan di YouTube Music.</string>
+    <string name="spotify_import_title">Impor playlist Spotify</string>
+    <string name="spotify_import_unmatched">%1$d lagu tidak ditemukan di YouTube Music</string>
+    <string name="spotify_library_subtitle">Playlist Spotify Anda</string>
+    <string name="spotify_sign_in">Masuk dengan Spotify</string>
+    <string name="spotify_track_unavailable">Lagu itu tidak ditemukan di YouTube Music</string>
 </resources>

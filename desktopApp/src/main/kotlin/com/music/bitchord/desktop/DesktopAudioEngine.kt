@@ -58,7 +58,12 @@ class DesktopPlaybackEngine(
     private val sink = DesktopAudioSink()
 
     /** Automix's evidence. */
-    private val analyzer = DesktopTrackAnalyzer(performance = { automixPerformance })
+    private val analyzer = DesktopTrackAnalyzer(
+        performance = { automixPerformance },
+        // Automix is off in a party, so whatever was queued for it before the party began is
+        // dropped rather than run to completion.
+        stopped = { DesktopListenTogether.state.value.inParty },
+    )
     private val commands = ConcurrentLinkedQueue<Command>()
     private val running = AtomicBoolean(true)
 
@@ -71,6 +76,31 @@ class DesktopPlaybackEngine(
             if (selected != observedOutputDevice) {
                 observedOutputDevice = selected
                 commands += Command.Reconfigure
+            }
+        }
+    }
+
+    init {
+        // Windows' endpoint watcher bumps the same signal from the OS's own push; Linux asks the
+        // kernel on a poll — see [DesktopLinuxAudioWatcher]. A device change reconfigures a
+        // playing line only when the line was opened on a per-device mixer that is no longer
+        // there; the plain `default` mixer follows the desktop's routing on its own under
+        // PipeWire, so it needs no help.
+        DesktopLinuxAudioWatcher.ensureStarted()
+        scope.launch {
+            DesktopAudioDevices.changes.collect {
+                if (DesktopPlatform.isWindows) return@collect // its native side moves the stream itself
+                observedOutputDevice.let { chosen ->
+                    if (chosen != DesktopAudioDevices.SYSTEM_DEFAULT &&
+                        DesktopAudioDevices.mixerFor(chosen) == null
+                    ) {
+                        // The stored device is gone: fall back to the system default rather than
+                        // leaving playback pointed at a mixer that no longer exists.
+                        DesktopAudioDevices.select(DesktopAudioDevices.SYSTEM_DEFAULT)
+                        observedOutputDevice = DesktopAudioDevices.SYSTEM_DEFAULT
+                        commands += Command.Reconfigure
+                    }
+                }
             }
         }
     }

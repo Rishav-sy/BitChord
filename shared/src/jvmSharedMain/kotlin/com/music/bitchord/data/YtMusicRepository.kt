@@ -5,13 +5,17 @@ import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
+import com.music.bitchord.data.model.isExactArtistMatch
+import com.music.bitchord.data.model.normalizedArtistName
 import com.music.bitchord.data.model.ArtistPage
+import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.MoodGenreSection
+import com.music.bitchord.data.model.playlistMoves
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
@@ -568,6 +572,32 @@ object YtMusicRepository {
     }
 
     /**
+     * The page of the artist called exactly [name], or null when there is none.
+     *
+     * YouTube does not link every credited artist. On a real two-artist track
+     * the byline and even the album header linked only the first name, so
+     * there is no channel behind the second name anywhere in the response. A
+     * name is all that is left, and the first search hit for one is not it: ask
+     * for `2115` and the results are White 2115, Bedoes 2115, Blacha 2115 and
+     * Kuqe 2115, four different people.
+     *
+     * So a hit is accepted only when its own title is the name asked for. That
+     * one rule is the whole of the safety here: `Monday Waxie` finds its page,
+     * and `2115` finds nothing and opens nothing rather than somebody else.
+     * Asking for `Mate` can land on either of two artists of that name, which
+     * is the honest answer to an ambiguous question rather than a wrong one.
+     */
+    suspend fun findArtistPageId(name: String): Result<String?> = call("artistByName:$name") {
+        if (normalizedArtistName(name).isEmpty()) return@call null
+        val filter = SearchFilter.ARTISTS
+        InnertubeParser.parseSearchPage(Innertube.search(name, filter.params)).rows
+            .filterIsInstance<SearchResult.Browse>()
+            .map { it.item }
+            .firstOrNull { it.type == BrowseType.ARTIST && isExactArtistMatch(it.title, name) }
+            ?.browseId
+    }
+
+    /**
      * The artist and album pages a track links out to.
      *
      * Search rows carry them, but home cards and anything already sitting in a
@@ -901,6 +931,53 @@ object YtMusicRepository {
     ): Result<Unit> = call("playlist:remove") {
         Innertube.removeFromPlaylist(playlistId, entries)
     }
+
+    /**
+     * A playlist's entries in their current order, every page of them, for
+     * rearranging.
+     *
+     * Fetched fresh rather than read off the open page, because a reorder is
+     * sent as moves relative to neighbours (see [playlistMoves]) and a list
+     * that stops short of the end — the open page while it is still filling
+     * in — would send the last row it has "to the end" past rows it never saw.
+     * Fails when an entry comes back without the set-video-id a move has to
+     * name, rather than offering to reorder something it can't.
+     */
+    suspend fun playlistEntries(browseId: String): Result<List<Song>> = call("entries:$browseId") {
+        val out = LinkedHashMap<String, Song>()
+        var response = Innertube.browse(browseId)
+        var page = 1
+        while (true) {
+            val shelf = InnertubeParser.parsePlaylistShelf(response) ?: break
+            shelf.songs.forEach { song ->
+                val setVideoId = song.setVideoId ?: error("playlist entry without an id")
+                out.putIfAbsent(setVideoId, song)
+            }
+            val token = shelf.continuation ?: break
+            // Same cap as [songsPaged] — a playlist past it can't be listed
+            // whole, and a partial list can't be reordered safely.
+            if (page++ >= MAX_PAGES) error("playlist too long to reorder")
+            response = Innertube.browseContinuation(token)
+        }
+        out.values.toList()
+    }
+
+    /**
+     * Rearranges a playlist from [current] to [target], both its entries'
+     * set-video-ids — see [playlistMoves]. Sent in batches so a large
+     * rearrangement doesn't become one oversized request.
+     */
+    suspend fun reorderPlaylist(
+        playlistId: String,
+        current: List<String>,
+        target: List<String>,
+    ): Result<Unit> = call("playlist:reorder") {
+        playlistMoves(current, target).chunked(MOVE_BATCH).forEach { batch ->
+            Innertube.movePlaylistItems(playlistId, batch)
+        }
+    }
+
+    private const val MOVE_BATCH = 50
 
     suspend fun renamePlaylist(playlistId: String, title: String): Result<Unit> =
         call("playlist:rename") { Innertube.renamePlaylist(playlistId, title) }
