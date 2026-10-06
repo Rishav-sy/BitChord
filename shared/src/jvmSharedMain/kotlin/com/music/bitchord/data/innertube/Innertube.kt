@@ -1193,7 +1193,8 @@ object Innertube {
                 header("Referer", "$MUSIC_ORIGIN/")
                 header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
                 header("X-YouTube-Client-Version", clientVersion)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
+                val safeVisitorData = visitorData.takeUnless { visitorDataIsSessionBound }
+                safeVisitorData?.let { header("X-Goog-Visitor-Id", it) }
                 // No Cookie / Authorization headers — anonymous request.
                 setBody(
                     buildJsonObject {
@@ -1203,7 +1204,7 @@ object Innertube {
                                 put("clientVersion", clientVersion)
                                 put("hl", "en")
                                 put("gl", "US")
-                                visitorData?.let { put("visitorData", it) }
+                                safeVisitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)
