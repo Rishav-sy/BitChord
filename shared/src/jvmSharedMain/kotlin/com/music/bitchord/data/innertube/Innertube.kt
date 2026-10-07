@@ -20,6 +20,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.PlaylistMove
 import com.music.bitchord.data.model.PlaylistPrivacy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -437,6 +438,10 @@ object Innertube {
             CONFIG_DATASYNC_ID.find(html)?.groupValues?.get(1),
         )
         val authUser = CONFIG_SESSION_INDEX.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+
+        // Clear any anonymous visitorData so it isn't accidentally bound to this account.
+        visitorData = null
+        visitorDataIsSessionBound = false
 
         // The shell's own visitor id, which is bound to this session. Strictly
         // better than the anonymous one [fetchVisitorData] mints: the stats
@@ -1073,6 +1078,24 @@ object Innertube {
         }
     }
 
+    /**
+     * Rearranges a playlist, one [PlaylistMove] after another in the order
+     * given — see [com.music.bitchord.data.model.playlistMoves] for building
+     * them. A move with no successor goes to the end.
+     */
+    suspend fun movePlaylistItems(playlistId: String, moves: List<PlaylistMove>) {
+        if (moves.isEmpty()) return
+        editPlaylist(playlistId) {
+            moves.forEach { move ->
+                addJsonObject {
+                    put("action", "ACTION_MOVE_VIDEO_BEFORE")
+                    put("setVideoId", move.setVideoId)
+                    move.before?.let { put("movedSetVideoIdSuccessor", it) }
+                }
+            }
+        }
+    }
+
     suspend fun renamePlaylist(playlistId: String, title: String) {
         editPlaylist(playlistId) {
             addJsonObject {
@@ -1193,7 +1216,8 @@ object Innertube {
                 header("Referer", "$MUSIC_ORIGIN/")
                 header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
                 header("X-YouTube-Client-Version", clientVersion)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
+                val safeVisitorData = if (cookie == null) visitorData.takeUnless { visitorDataIsSessionBound } else null
+                safeVisitorData?.let { header("X-Goog-Visitor-Id", it) }
                 // No Cookie / Authorization headers — anonymous request.
                 setBody(
                     buildJsonObject {
@@ -1203,7 +1227,7 @@ object Innertube {
                                 put("clientVersion", clientVersion)
                                 put("hl", "en")
                                 put("gl", "US")
-                                visitorData?.let { put("visitorData", it) }
+                                safeVisitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)

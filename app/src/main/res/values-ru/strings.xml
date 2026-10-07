@@ -440,6 +440,10 @@
     <string name="remove_from_liked">Удалить из понравившейся музыки</string>
     <string name="remove_from_playlist">Удалить из этого плейлиста</string>
     <string name="rename_playlist">Переименовать плейлист</string>
+    <string name="reorder_songs">Изменить порядок треков</string>
+    <string name="reorder_failed">Не удалось сохранить новый порядок</string>
+    <string name="playlist_reordered">Порядок плейлиста сохранён</string>
+    <string name="save_order">Сохранить</string>
     <string name="reset_to_default">Сбросить по умолчанию</string>
     <string name="rich_presence_footer">Показывать, что вы слушаете, в вашем профиле Discord.</string>
     <string name="save_name">Сохранить название</string>
@@ -1241,6 +1245,18 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Добавлено в плейлист</string>
     <string name="song_already_in_playlist">Уже в плейлисте</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">Добавить в %1$d плейлист</item>
+        <item quantity="few">Добавить в %1$d плейлиста</item>
+        <item quantity="many">Добавить в %1$d плейлистов</item>
+        <item quantity="other">Добавить в %1$d плейлиста</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">Добавлено в %1$d плейлист</item>
+        <item quantity="few">Добавлено в %1$d плейлиста</item>
+        <item quantity="many">Добавлено в %1$d плейлистов</item>
+        <item quantity="other">Добавлено в %1$d плейлиста</item>
+    </plurals>
     <string name="party_queue_full">Очередь заполнена (максимум %d песен на вечеринке)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
@@ -1274,4 +1290,34 @@
     <string name="song_cache_unlimited_subtitle">Без ограничений. Кэшированное аудио может расти, пока не заполнится память.</string>
     <string name="clear_song_cache_title">Очистить кэш треков?</string>
     <string name="clear_song_cache_warning">Все кэшированные треки будут удалены, а папка кэшированных треков опустеет. При следующем воспроизведении они снова будут загружаться потоком.</string>
+    <string name="import_spotify">Импорт из Spotify</string>
+    <string name="import_spotify_subtitle">Из ссылки на плейлист</string>
+    <string name="local_playlist_subtitle">%1$d треков · На этом устройстве</string>
+    <string name="lossless_output_permission_denied">Разрешение «Устройства поблизости» выключено</string>
+    <string name="lossless_output_permission_denied_detail">Нажмите, чтобы открыть настройки и разрешить «Устройства поблизости» — без него мы не сможем определить ваш кодек Bluetooth</string>
+    <string name="recent_album">Недавний альбом</string>
+    <string name="recent_ep">Недавний EP</string>
+    <string name="recent_single">Недавний сингл</string>
+    <string name="spotify">Spotify</string>
+    <string name="spotify_connect_subtitle">Войдите, чтобы загрузить свои плейлисты. Воспроизведение идёт через YouTube Music.</string>
+    <string name="spotify_disconnect">Отключить</string>
+    <string name="spotify_empty_playlists">В этом аккаунте нет плейлистов</string>
+    <string name="spotify_empty_tracks">В этом плейлисте нет треков</string>
+    <string name="spotify_import_button">Импорт</string>
+    <string name="spotify_import_description">Вставьте ссылку на публичный плейлист. Треки сопоставляются на YouTube Music.</string>
+    <string name="spotify_import_description_local">Вставьте ссылку на публичный плейлист. Треки сопоставляются на YouTube Music и сохраняются на этом устройстве.</string>
+    <string name="spotify_import_done">Импортирован «%1$s»</string>
+    <string name="spotify_import_empty_playlist">В этом плейлисте нет треков</string>
+    <string name="spotify_import_failed">Не удалось импортировать плейлист: %1$s</string>
+    <string name="spotify_import_fetching">Читаем плейлист Spotify…</string>
+    <string name="spotify_import_hint">open.spotify.com/playlist/…</string>
+    <string name="spotify_import_invalid">Это не ссылка на плейлист Spotify.</string>
+    <string name="spotify_import_local_fallback">Не удалось создать её на YouTube Music, поэтому «%1$s» сохранена на этом устройстве.</string>
+    <string name="spotify_import_matching">Сопоставление треков %1$d из %2$d</string>
+    <string name="spotify_import_none">Ни один из этих треков не найден на YouTube Music.</string>
+    <string name="spotify_import_title">Импорт плейлиста из Spotify</string>
+    <string name="spotify_import_unmatched">%1$d треков не найдено на YouTube Music</string>
+    <string name="spotify_library_subtitle">Ваши плейлисты Spotify</string>
+    <string name="spotify_sign_in">Войти через Spotify</string>
+    <string name="spotify_track_unavailable">Не удалось найти этот трек на YouTube Music</string>
 </resources>

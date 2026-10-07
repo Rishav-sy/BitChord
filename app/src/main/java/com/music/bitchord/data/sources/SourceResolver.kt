@@ -810,7 +810,9 @@ object SourceResolver {
                     val (source, stream) = task.deferred.await()
                     if (stream == null) continue
                     if (!accept(source, stream)) continue
-                    if (isBetter(stream.format, best?.second?.format, source.kind.rank, best?.first?.kind?.rank ?: Int.MAX_VALUE)) {
+                    val candPriority = SourceRegistry.priorityOf(source.configId)
+                    val bestPriority = best?.first?.let { SourceRegistry.priorityOf(it.configId) } ?: Int.MAX_VALUE
+                    if (isBetter(stream.format, best?.second?.format, candPriority, bestPriority)) {
                         best = source to stream
                     }
                 }
@@ -820,9 +822,10 @@ object SourceResolver {
                 // (Tidal/Qobuz/Deezer) are still running.
                 if (best != null && !waitForAll) {
                     val isLossless = best.second.format.isLossless == true
+                    val bestPriority = SourceRegistry.priorityOf(best.first.configId)
                     val pendingBetterSource = running.any { task ->
                         if (isLossless) {
-                            task.source.kind.canServeLossless && task.source.kind.rank < best.first.kind.rank
+                            task.source.kind.canServeLossless && SourceRegistry.priorityOf(task.source.configId) < bestPriority
                         } else {
                             request is StreamRequest.Lossless && task.source.kind.canServeLossless
                         }

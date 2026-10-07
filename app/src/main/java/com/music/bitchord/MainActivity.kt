@@ -48,7 +48,10 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyListState
@@ -121,6 +124,7 @@ import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -134,6 +138,7 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
 import kotlinx.coroutines.Dispatchers
@@ -203,6 +208,7 @@ import com.music.bitchord.ui.components.BrowseTarget
 import com.music.bitchord.ui.components.ConfirmationAlert
 import com.music.bitchord.ui.components.DownloadManagerSheet
 import com.music.bitchord.ui.components.PlaylistPickerSheet
+import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
@@ -253,6 +259,7 @@ import com.music.bitchord.ui.components.ServerEditorHost
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.components.WebDavConflictAlert
 import com.music.bitchord.ui.components.FieldConfig
+import com.music.bitchord.ui.components.SourceInfoAlert
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
@@ -555,6 +562,7 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
+    var infoSource by remember { mutableStateOf<SourceConfig?>(null) }
     var confirmJioSaavn by remember { mutableStateOf(false) }
     var editingPartyServer by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
@@ -634,6 +642,11 @@ private fun BitChordApp(
     var browseMenuOrigin by remember { mutableStateOf<HeldItem?>(null) }
     /** Rename asked for from the popup, which hands it on to the sheet's form. */
     var browseRenameInSheet by remember { mutableStateOf(false) }
+    /** The playlist being rearranged, or null when the reorder sheet is shut. */
+    var reorderTarget by remember { mutableStateOf<UserPlaylist?>(null) }
+    /** Its entries as YouTube has them now — fetched fresh when the sheet opens. */
+    var reorderEntries by remember { mutableStateOf<UiState<List<Song>>>(UiState.Loading) }
+    var reorderSaving by remember { mutableStateOf(false) }
     /** Holding an album or playlist: the popup when it was a hold, else the sheet. */
     val openBrowseMenu: (BrowseTarget) -> Unit = { target ->
         browseMenuOrigin = LongPressOrigin.consume()
@@ -1267,7 +1280,7 @@ private fun BitChordApp(
                 val selectedSong = songs.getOrNull(index) ?: return@launch
                 val party = ListenTogether.state.value
                 val partyQueue = party.queue.items
-                val partyIndex = partyQueue.indexOfFirst { it.videoId == party.playback.track?.videoId }
+                val partyIndex = partyQueueIndexOf(party.queue, party.playback, party.playback.track?.videoId)
                 val upcomingPartyTracks = if (partyIndex >= 0) {
                     partyQueue.drop(partyIndex + 1)
                 } else {
@@ -2296,17 +2309,45 @@ private fun BitChordApp(
                     BrowseType.ALBUM,
                 )
             },
-            onOpenArtist = { id ->
+            // A credit with a channel id opens that channel straight away.
+            // YouTube does not give one to every credited artist - on a two-artist
+            // track it linked only the first, and neither the byline nor the
+            // album header had the second - so the rest go by name, through a
+            // lookup that opens a page only when the answer is that name
+            // exactly. Otherwise nothing opens, which beats opening a stranger.
+            //
+            // No artwork: this track's cover isn't the artist's
+            // picture, and the page fills its own in once loaded.
+            onOpenArtist = { id, name ->
                 dismissPlayer()
-                // No artwork: this track's cover isn't the artist's
-                // picture, and the page fills its own in once loaded.
-                viewModel.openDetail(
-                    id,
-                    song.artist,
-                    context.getString(R.string.artist),
-                    null,
-                    BrowseType.ARTIST,
-                )
+                if (id != null) {
+                    viewModel.openDetail(
+                        id,
+                        name,
+                        context.getString(R.string.artist),
+                        null,
+                        BrowseType.ARTIST,
+                    )
+                } else {
+                    scope.launch {
+                        val found = YtMusicRepository.findArtistPageId(name).getOrNull()
+                        if (found != null) {
+                            viewModel.openDetail(
+                                found,
+                                name,
+                                context.getString(R.string.artist),
+                                null,
+                                BrowseType.ARTIST,
+                            )
+                        } else {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.couldnt_find, name),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                }
             },
             onOpenPlaybackSource = openSource@{
                 val sourceType = displayedSong.playbackSourceType ?: PlaybackSourceType.QUEUE
@@ -2460,6 +2501,7 @@ private fun BitChordApp(
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
         BackHandler(enabled = editingSource != null) { editingSource = null }
+        BackHandler(enabled = infoSource != null) { infoSource = null }
         BackHandler(enabled = editingPartyServer) { editingPartyServer = false }
         BackHandler(enabled = showHistory) { showHistory = false }
         // Disabled while a detail page is open over the grid: that one's own
@@ -2692,6 +2734,7 @@ private fun BitChordApp(
                         SourcesScreen(
                             contentPadding = listPadding,
                             onEditSource = { editingSource = it },
+                            onShowSourceInfo = { infoSource = it },
                             onEditWebDav = { showWebDavEditor = true },
                             onEditSmb = { showSmbEditor = true },
                             onConfirmJioSaavn = { confirmJioSaavn = true },
@@ -3263,6 +3306,7 @@ private fun BitChordApp(
                             SourcesScreen(
                                 contentPadding = listPadding,
                                 onEditSource = { editingSource = it },
+                                onShowSourceInfo = { infoSource = it },
                                 onEditWebDav = { showWebDavEditor = true },
                                 onEditSmb = { showSmbEditor = true },
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
@@ -4338,14 +4382,23 @@ private fun BitChordApp(
                     loading = playlistsLoading,
                     song = target,
                     startCreating = target == null,
-                    onPick = { playlist ->
+                    onAdd = { picked ->
                         target?.let { song ->
-                            viewModel.addToPlaylist(playlist, song) { alreadyInPlaylist ->
+                            viewModel.addToPlaylists(picked, song) { added, alreadyThere, failed ->
+                                // One line for the whole batch, saying the
+                                // outcome that matters most: what went in, else
+                                // that it was all there already, else that it
+                                // didn't work.
                                 showQueueNotice(
-                                    context.getString(
-                                        if (alreadyInPlaylist) R.string.song_already_in_playlist
-                                        else R.string.song_added_to_playlist,
-                                    ),
+                                    when {
+                                        added > 1 -> context.resources.getQuantityString(
+                                            R.plurals.added_to_playlists_notice, added, added,
+                                        )
+                                        added == 1 -> context.getString(R.string.song_added_to_playlist)
+                                        alreadyThere > 0 && failed == 0 ->
+                                            context.getString(R.string.song_already_in_playlist)
+                                        else -> context.getString(R.string.failed)
+                                    },
                                 )
                             }
                         }
@@ -4529,6 +4582,21 @@ private fun BitChordApp(
                         viewModel.renamePlaylist(p, name)
                     }
                 },
+                onReorder = playlist?.let { p ->
+                    {
+                        browseActions = null
+                        reorderTarget = p
+                        reorderEntries = UiState.Loading
+                        reorderSaving = false
+                        viewModel.loadPlaylistEntries(p) { result ->
+                            if (reorderTarget != p) return@loadPlaylistEntries
+                            reorderEntries = result.fold(
+                                onSuccess = { UiState.Success(it) },
+                                onFailure = { UiState.Error(context.getString(R.string.failed)) },
+                            )
+                        }
+                    }
+                },
                 onDelete = playlist?.let { p ->
                     {
                         browseActions = null
@@ -4577,6 +4645,46 @@ private fun BitChordApp(
             if (browseActions == null) {
                 browseMenuOrigin = null
                 browseRenameInSheet = false
+            }
+        }
+
+        // ---- Reorder playlist ----
+        // Full height, and the list never hands its leftover scroll to the
+        // sheet: every vertical drag inside it is meant for a row or the list,
+        // and one that pulled the sheet down instead would throw the new order
+        // away. (Material3 1.3 has no sheetGesturesEnabled; the row drags
+        // consume their own events, so the list's overscroll is the only path.)
+        reorderTarget?.let { target ->
+            val close = { reorderTarget = null }
+            val keepSheetStill = remember {
+                object : NestedScrollConnection {
+                    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = available
+                    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = available
+                }
+            }
+            ModalBottomSheet(
+                onDismissRequest = close,
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                ReorderPlaylistSheet(
+                    modifier = Modifier.nestedScroll(keepSheetStill),
+                    playlist = target,
+                    entries = reorderEntries,
+                    saving = reorderSaving,
+                    onClose = close,
+                    onSave = { reordered ->
+                        val original = (reorderEntries as? UiState.Success)?.data.orEmpty()
+                        reorderSaving = true
+                        viewModel.reorderPlaylist(target, original, reordered) { saved ->
+                            reorderSaving = false
+                            showQueueNotice(
+                                context.getString(if (saved) R.string.playlist_reordered else R.string.reorder_failed),
+                            )
+                            if (saved && reorderTarget == target) reorderTarget = null
+                        }
+                    },
+                )
             }
         }
 
@@ -5030,6 +5138,20 @@ private fun BitChordApp(
                     editingSource = null
                 },
                 scope = scope,
+            )
+        }
+
+        infoSource?.let { config ->
+            SourceInfoAlert(
+                hazeState = hazeState,
+                config = config,
+                onDismiss = { infoSource = null },
+                onEditUrl = if (config.kind == SourceKind.ADDON || config.kind == SourceKind.CUSTOM_MODULE) {
+                    {
+                        infoSource = null
+                        editingSource = config
+                    }
+                } else null,
             )
         }
 

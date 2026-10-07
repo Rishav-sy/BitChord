@@ -1,9 +1,11 @@
 package com.music.bitchord.data.sources
 
+import android.util.Base64
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonTrack
+import com.music.bitchord.data.sources.pool.PoolAccountManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -16,6 +18,7 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "BitChord"
 private const val TIDAL_TOKEN = "49YxDN9a2aFV6RTG"
+private const val TIDAL_USER_AGENT = "TIDAL_ANDROID/1118 okhttp/4.12.0"
 
 class TidalSource(
     override val config: SourceConfig,
@@ -30,8 +33,8 @@ class TidalSource(
 
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(6, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
             .build()
     }
 
@@ -49,20 +52,28 @@ class TidalSource(
                 onFailure = { SourceHealth.Unreachable(it.message ?: "Could not reach Tidal server") },
             )
         }
-        val directOk = runCatching {
-            val url = "https://tidal.com/v1/search/tracks?query=test&limit=1&countryCode=IN"
-            val req = Request.Builder()
-                .url(url)
-                .header("x-tidal-token", TIDAL_TOKEN)
-                .header("Accept", "application/json")
-                .build()
-            okHttpClient.newCall(req).execute().use { it.isSuccessful }
-        }.getOrDefault(false)
 
-        if (directOk) {
-            SourceHealth.Ok("Tidal · Direct catalog ready")
+        // Standalone mode: ensure community pool accounts are available
+        PoolAccountManager.ensureAccounts()
+        val accounts = PoolAccountManager.getTidalAccounts()
+        if (accounts.isNotEmpty()) {
+            SourceHealth.Ok("Tidal · Lossless Pool Connected (${accounts.size} accounts)")
         } else {
-            SourceHealth.Ok("Tidal · Ready")
+            val directOk = runCatching {
+                val url = "https://tidal.com/v1/search/tracks?query=test&limit=1&countryCode=US"
+                val req = Request.Builder()
+                    .url(url)
+                    .header("x-tidal-token", TIDAL_TOKEN)
+                    .header("Accept", "application/json")
+                    .build()
+                okHttpClient.newCall(req).execute().use { it.isSuccessful }
+            }.getOrDefault(false)
+
+            if (directOk) {
+                SourceHealth.Ok("Tidal · Ready")
+            } else {
+                SourceHealth.Ok("Tidal · Ready")
+            }
         }
     }
 
@@ -99,25 +110,29 @@ class TidalSource(
                 }
             }
 
-            // 2. Direct Tidal search API fallback
+            // 2. Standalone direct Tidal search API
             try {
+                PoolAccountManager.ensureAccounts()
+                val countryCode = PoolAccountManager.getTidalAccounts()
+                    .firstOrNull()?.countryCode ?: "US"
+
                 val url = "https://tidal.com/v1/search/tracks"
                     .toHttpUrlOrNull()
                     ?.newBuilder()
                     ?.addQueryParameter("query", query)
                     ?.addQueryParameter("limit", limit.coerceAtMost(15).toString())
-                    ?.addQueryParameter("countryCode", "IN")
-                    ?.addQueryParameter("locale", "en_IN")
+                    ?.addQueryParameter("countryCode", countryCode)
+                    ?.addQueryParameter("locale", "en_${countryCode}")
                     ?.addQueryParameter("deviceType", "BROWSER")
                     ?.build() ?: return@withContext emptyList()
 
-                val request = Request.Builder()
+                val searchReq = Request.Builder()
                     .url(url)
                     .header("x-tidal-token", TIDAL_TOKEN)
                     .header("Accept", "application/json")
                     .build()
 
-                okHttpClient.newCall(request).execute().use { response ->
+                okHttpClient.newCall(searchReq).execute().use { response ->
                     if (!response.isSuccessful) return@withContext emptyList()
                     val body = response.body?.string().orEmpty()
                     val root = JSONObject(body)
@@ -150,7 +165,7 @@ class TidalSource(
                             )
                         )
                     }
-                    TrackLog.d(TAG, "  ✓ Tidal (direct API) returned ${result.size} tracks")
+                    TrackLog.d(TAG, "  ✓ Tidal returned ${result.size} tracks")
                     result
                 }
             } catch (e: Exception) {
@@ -162,27 +177,132 @@ class TidalSource(
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
         withContext(Dispatchers.IO) {
             TrackLog.d(TAG, "▶ Tidal stream() trackId=$trackId request=$request")
-            val client = addonClient ?: return@withContext null
-            val streamResult = client.stream(trackId, AddonClient.TIER_LOSSLESS).getOrNull()
-            val url = streamResult?.url?.ifBlank { null }
-                ?: rows[trackId]?.streamURL?.ifBlank { null }
-            if (url != null) {
-                TrackLog.d(TAG, "  ✓ Tidal stream URL: ${url.take(80)}")
-                val sampleRateHz = streamResult?.sampleRateHz
-                val bitDepth = streamResult?.bits ?: 16
-                val kbps = streamResult?.kbps
-                    ?: (if (sampleRateHz != null) sampleRateHz * bitDepth * 2 / 1000 else 1411)
-                return@withContext SourceStream(
-                    url = url,
-                    format = StreamFormat(
-                        codec = streamResult?.statedCodec ?: "flac",
-                        kbps = kbps,
-                        sampleRateHz = sampleRateHz,
-                        bitDepth = bitDepth,
-                    ),
-                )
+
+            // 1. If configured with server, stream via addon protocol
+            val client = addonClient
+            if (client != null) {
+                val streamResult = client.stream(trackId, AddonClient.TIER_LOSSLESS).getOrNull()
+                val url = streamResult?.url?.ifBlank { null }
+                    ?: rows[trackId]?.streamURL?.ifBlank { null }
+                if (url != null) {
+                    TrackLog.d(TAG, "  ✓ Tidal server stream URL: ${url.take(80)}")
+                    val sampleRateHz = streamResult?.sampleRateHz
+                    val bitDepth = streamResult?.bits ?: 16
+                    val kbps = streamResult?.kbps
+                        ?: (if (sampleRateHz != null) sampleRateHz * bitDepth * 2 / 1000 else 1411)
+                    return@withContext SourceStream(
+                        url = url,
+                        format = StreamFormat(
+                            codec = streamResult?.statedCodec ?: "flac",
+                            kbps = kbps,
+                            sampleRateHz = sampleRateHz,
+                            bitDepth = bitDepth,
+                        ),
+                    )
+                }
             }
-            TrackLog.w(TAG, "  ✗ Tidal had no stream URL for $trackId")
+
+            // 2. Standalone direct stream via ArchivePool tokens
+            PoolAccountManager.ensureAccounts()
+            val accounts = PoolAccountManager.getTidalAccounts()
+            if (accounts.isEmpty()) {
+                TrackLog.w(TAG, "  ✗ No Tidal accounts available in pool")
+                return@withContext null
+            }
+
+            for (acc in accounts) {
+                val stream = resolveTidalStream(trackId, acc.token)
+                if (stream != null) {
+                    TrackLog.d(TAG, "  ✓ Tidal standalone stream resolved at ${stream.format.summary}")
+                    return@withContext stream
+                }
+            }
+
+            TrackLog.w(TAG, "  ✗ Tidal had no stream URL for $trackId across ${accounts.size} accounts")
             null
         }
+
+    private fun resolveTidalStream(trackId: String, token: String): SourceStream? {
+        val endpoints = listOf(
+            "https://api.tidal.com/v1/tracks/$trackId/playbackinfopostpaywall?audioquality=LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
+            "https://api.tidal.com/v1/tracks/$trackId/playbackinfo?audioquality=LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
+            "https://api.tidal.com/v1/tracks/$trackId/playbackinfopostpaywall?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
+        )
+
+        for (endpoint in endpoints) {
+            try {
+                val req = Request.Builder()
+                    .url(endpoint)
+                    .header("Authorization", "Bearer $token")
+                    .header("User-Agent", TIDAL_USER_AGENT)
+                    .header("Accept", "application/json")
+                    .build()
+
+                okHttpClient.newCall(req).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    val body = response.body?.string().orEmpty()
+                    if (body.isBlank()) return@use null
+
+                    val json = JSONObject(body)
+                    if (json.optString("assetPresentation").equals("PREVIEW", ignoreCase = true)) {
+                        return@use null
+                    }
+
+                    val manifestB64 = json.optString("manifest").takeIf { it.isNotBlank() } ?: return@use null
+                    val manifestMime = json.optString("manifestMimeType").ifBlank { null }
+                    val manifestDecoded = runCatching {
+                        String(Base64.decode(manifestB64, Base64.DEFAULT), Charsets.UTF_8)
+                    }.getOrNull() ?: return@use null
+
+                    // 1. JSON BTS Manifest (direct single-file CDN link)
+                    if (manifestDecoded.trimStart().startsWith("{")) {
+                        val manJson = JSONObject(manifestDecoded)
+                        val urls = manJson.optJSONArray("urls")
+                        val streamUrl = urls?.optString(0)?.takeIf { it.isNotBlank() } ?: return@use null
+                        val codecs = manJson.optString("codecs", "flac")
+                        val mimeType = manJson.optString("mimeType", manifestMime.orEmpty())
+                        val isFlac = codecs.contains("flac", true) || mimeType.contains("flac", true)
+                        val sampleRateHz = if (endpoint.contains("HI_RES")) 96000 else 44100
+                        val bitDepth = if (endpoint.contains("HI_RES")) 24 else 16
+
+                        return SourceStream(
+                            url = streamUrl,
+                            format = StreamFormat(
+                                codec = if (isFlac) "flac" else codecs,
+                                kbps = if (isFlac) (if (bitDepth > 16) 2304 else 1411) else 320,
+                                sampleRateHz = sampleRateHz,
+                                bitDepth = bitDepth,
+                            ),
+                            headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
+                        )
+                    }
+
+                    // 2. DASH MPD Manifest
+                    if (manifestDecoded.contains("<MPD", ignoreCase = true)) {
+                        val initUrlMatch = Regex("<Initialization\\b[^>]*sourceURL=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
+                            .find(manifestDecoded)?.groupValues?.getOrNull(1)
+                        val segmentUrlMatch = Regex("<SegmentURL\\b[^>]*media=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
+                            .find(manifestDecoded)?.groupValues?.getOrNull(1)
+
+                        val streamUrl = segmentUrlMatch ?: initUrlMatch
+                        if (!streamUrl.isNullOrBlank()) {
+                            return SourceStream(
+                                url = streamUrl,
+                                format = StreamFormat(
+                                    codec = "flac",
+                                    kbps = 1411,
+                                    sampleRateHz = 44100,
+                                    bitDepth = 16,
+                                ),
+                                headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                TrackLog.w(TAG, "Tidal resolve endpoint failed: ${e.message}")
+            }
+        }
+        return null
+    }
 }
