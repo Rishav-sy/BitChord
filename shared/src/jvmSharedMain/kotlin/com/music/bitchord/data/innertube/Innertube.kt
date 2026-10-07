@@ -439,6 +439,10 @@ object Innertube {
         )
         val authUser = CONFIG_SESSION_INDEX.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
 
+        // Clear any anonymous visitorData so it isn't accidentally bound to this account.
+        visitorData = null
+        visitorDataIsSessionBound = false
+
         // The shell's own visitor id, which is bound to this session. Strictly
         // better than the anonymous one [fetchVisitorData] mints: the stats
         // pings are attributed against the visitor the player response was
@@ -1212,7 +1216,7 @@ object Innertube {
                 header("Referer", "$MUSIC_ORIGIN/")
                 header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
                 header("X-YouTube-Client-Version", clientVersion)
-                val safeVisitorData = visitorData.takeUnless { visitorDataIsSessionBound }
+                val safeVisitorData = if (cookie == null) visitorData.takeUnless { visitorDataIsSessionBound } else null
                 safeVisitorData?.let { header("X-Goog-Visitor-Id", it) }
                 // No Cookie / Authorization headers — anonymous request.
                 setBody(
