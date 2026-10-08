@@ -620,7 +620,7 @@ object Innertube {
     }
 
     suspend fun search(query: String, params: String? = null): JsonObject =
-        postMusic("search") {
+        postMusicAnonymous("search") {
             put("query", query)
             params?.let { put("params", it) }
         }
@@ -641,8 +641,7 @@ object Innertube {
             params?.let { put("params", it) }
         }
 
-    /** The next page of a filtered search result. */
-    suspend fun searchContinuation(token: String): JsonObject = postMusic(
+    suspend fun searchContinuation(token: String): JsonObject = postMusicAnonymous(
         endpoint = "search",
         query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
     ) {
@@ -659,7 +658,7 @@ object Innertube {
      * it affordable per keystroke where a search is not.
      */
     suspend fun searchSuggestions(input: String): JsonObject =
-        postMusic("music/get_search_suggestions") {
+        postMusicAnonymous("music/get_search_suggestions") {
             put("input", input)
         }
 
