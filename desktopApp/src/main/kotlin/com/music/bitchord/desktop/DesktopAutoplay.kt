@@ -44,7 +44,7 @@ internal object DesktopAutoplay {
         if (DesktopMusicSources.hasYouTubeOriginal(song)) return song.videoId
         val query = DesktopTrackMatcher.queries(song).firstOrNull() ?: return null
         // YouTube specifically, not the configured sources.
-        return DesktopSearchClient.search(query, SearchFilter.SONGS)
+        return DesktopSearchClient.searchAnonymous(query, SearchFilter.SONGS)
             .getOrNull()
             ?.mapNotNull { result ->
                 when (result) {

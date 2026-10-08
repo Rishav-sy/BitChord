@@ -405,7 +405,7 @@ object YtMusicRepository {
         audioVersionCache[song.videoId]?.let { return it }
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.SONGS)
+            val candidates = searchAnonymous(query, SearchFilter.SONGS)
                 .getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
@@ -442,7 +442,7 @@ object YtMusicRepository {
         videoVersionCache[song.videoId]?.let { return it }
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
-            val candidates = search(query, SearchFilter.VIDEOS)
+            val candidates = searchAnonymous(query, SearchFilter.VIDEOS)
                 .getOrNull()
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
@@ -590,7 +590,7 @@ object YtMusicRepository {
     suspend fun findArtistPageId(name: String): Result<String?> = call("artistByName:$name") {
         if (normalizedArtistName(name).isEmpty()) return@call null
         val filter = SearchFilter.ARTISTS
-        InnertubeParser.parseSearchPage(Innertube.search(name, filter.params)).rows
+        InnertubeParser.parseSearchPage(Innertube.searchAnonymous(name, filter.params)).rows
             .filterIsInstance<SearchResult.Browse>()
             .map { it.item }
             .firstOrNull { it.type == BrowseType.ARTIST && isExactArtistMatch(it.title, name) }

@@ -620,7 +620,7 @@ object Innertube {
     }
 
     suspend fun search(query: String, params: String? = null): JsonObject =
-        postMusicAnonymous("search") {
+        postMusic("search") {
             put("query", query)
             params?.let { put("params", it) }
         }
@@ -641,7 +641,7 @@ object Innertube {
             params?.let { put("params", it) }
         }
 
-    suspend fun searchContinuation(token: String): JsonObject = postMusicAnonymous(
+    suspend fun searchContinuation(token: String): JsonObject = postMusic(
         endpoint = "search",
         query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
     ) {
@@ -658,7 +658,7 @@ object Innertube {
      * it affordable per keystroke where a search is not.
      */
     suspend fun searchSuggestions(input: String): JsonObject =
-        postMusicAnonymous("music/get_search_suggestions") {
+        postMusic("music/get_search_suggestions") {
             put("input", input)
         }
 
@@ -1116,100 +1116,14 @@ object Innertube {
         endpoint: String,
         query: Map<String, String> = emptyMap(),
         bodyExtras: JsonObjectBuilder.() -> Unit,
-    ): JsonObject = postMusic(endpoint, query, authenticated = false, bodyExtras = bodyExtras)
-
-    private suspend fun postMusic(
-        endpoint: String,
-        query: Map<String, String> = emptyMap(),
-        authenticated: Boolean = true,
-        bodyExtras: JsonObjectBuilder.() -> Unit,
-    ): JsonObject {
-        // This is the common authenticated request path: Home, Library,
-        // likes, playlists, account menus and all their continuations pass
-        // through it. Waiting here makes restoration process-wide rather than
-        // a special case implemented by whichever screen happened to open.
-        if (authenticated && cookie != null) ensureSessionScope()
-        val session = if (authenticated) scope else null
-        val clientVersion = webRemixVersion
-        val response = withRetry {
-            client.post("$MUSIC_BASE/$endpoint") {
-                contentType(ContentType.Application.Json)
-                parameter("prettyPrint", "false")
-                parameter("hl", currentLanguage)
-                header("Accept-Language", acceptLanguageHeader)
-                query.forEach { (key, value) -> parameter(key, value) }
-                header("X-Origin", MUSIC_ORIGIN)
-                header("Origin", MUSIC_ORIGIN)
-                header("Referer", "$MUSIC_ORIGIN/")
-                // Stats pings are only honoured for a session Google recognises
-                // as a real client, so identify as one here too — the visitor
-                // id is minted on the first call and reused for the session.
-                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
-                header("X-YouTube-Client-Version", clientVersion)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                if (authenticated) {
-                    cookie?.let { c ->
-                        header("Cookie", c)
-                        // Which account in the jar, and which brand channel of it.
-                        // Both were fixed at "the first one" before — see
-                        // [SessionScope].
-                        header("X-Goog-AuthUser", authUserFor(session))
-                        pageIdFor(session)?.let { header("X-Goog-PageId", it) }
-                        sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
-                    }
-                }
-                setBody(
-                    buildJsonObject {
-                        putJsonObject("context") {
-                            putJsonObject("client") {
-                                put("clientName", "WEB_REMIX")
-                                put("clientVersion", clientVersion)
-                                put("hl", currentLanguage)
-                                put("gl", "US")
-                                visitorData?.let { put("visitorData", it) }
-                            }
-                            putJsonObject("user") {
-                                put("lockedSafetyMode", false)
-                                // Only ever a value read back from a shell that
-                                // said it was signed in: Google answers an
-                                // `onBehalfOfUser` it cannot tie to the cookie
-                                // with 401, so a guess here would take the
-                                // whole app down rather than just history.
-                                if (authenticated) {
-                                    dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
-                                }
-                            }
-                            putJsonObject("request") { put("useSsl", true) }
-                        }
-                        bodyExtras()
-                    },
-                )
-            }.body<JsonObject>()
-        }
-
-        if (visitorData == null) {
-            visitorData = response["responseContext"]?.jsonObject
-                ?.get("visitorData")?.jsonPrimitive?.content
-        }
-        return response
-    }
-
-    /**
-     * Like [postMusic] but deliberately strips the session cookie so YouTube
-     * Music does not record the call against any account.
-     *
-     * Used for typeahead lookups where intermediate keystrokes must remain
-     * anonymous — see [searchTypeahead].
-     */
-    private suspend fun postMusicAnonymous(
-        endpoint: String,
-        bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
         val clientVersion = webRemixVersion
         return withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
                 contentType(ContentType.Application.Json)
                 parameter("prettyPrint", "false")
+                header("Accept-Language", acceptLanguageHeader)
+                query.forEach { (key, value) -> parameter(key, value) }
                 header("X-Origin", MUSIC_ORIGIN)
                 header("Origin", MUSIC_ORIGIN)
                 header("Referer", "$MUSIC_ORIGIN/")
@@ -1239,6 +1153,82 @@ object Innertube {
                 )
             }.body<JsonObject>()
         }
+    }
+
+    private suspend fun postMusicAnonymous(
+        endpoint: String,
+        bodyExtras: JsonObjectBuilder.() -> Unit,
+    ): JsonObject = postMusicAnonymous(endpoint, emptyMap(), bodyExtras)
+
+    private suspend fun postMusic(
+        endpoint: String,
+        query: Map<String, String> = emptyMap(),
+        bodyExtras: JsonObjectBuilder.() -> Unit,
+    ): JsonObject {
+        // This is the common authenticated request path: Home, Library,
+        // likes, playlists, account menus and all their continuations pass
+        // through it. Waiting here makes restoration process-wide rather than
+        // a special case implemented by whichever screen happened to open.
+        if (cookie != null) ensureSessionScope()
+        val session = scope
+        val clientVersion = webRemixVersion
+        val response = withRetry {
+            client.post("$MUSIC_BASE/$endpoint") {
+                contentType(ContentType.Application.Json)
+                parameter("prettyPrint", "false")
+                parameter("hl", currentLanguage)
+                header("Accept-Language", acceptLanguageHeader)
+                query.forEach { (key, value) -> parameter(key, value) }
+                header("X-Origin", MUSIC_ORIGIN)
+                header("Origin", MUSIC_ORIGIN)
+                header("Referer", "$MUSIC_ORIGIN/")
+                // Stats pings are only honoured for a session Google recognises
+                // as a real client, so identify as one here too — the visitor
+                // id is minted on the first call and reused for the session.
+                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
+                header("X-YouTube-Client-Version", clientVersion)
+                visitorData?.let { header("X-Goog-Visitor-Id", it) }
+                cookie?.let { c ->
+                    header("Cookie", c)
+                    // Which account in the jar, and which brand channel of it.
+                    // Both were fixed at "the first one" before — see
+                    // [SessionScope].
+                    header("X-Goog-AuthUser", authUserFor(session))
+                    pageIdFor(session)?.let { header("X-Goog-PageId", it) }
+                    sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
+                }
+                setBody(
+                    buildJsonObject {
+                        putJsonObject("context") {
+                            putJsonObject("client") {
+                                put("clientName", "WEB_REMIX")
+                                put("clientVersion", clientVersion)
+                                put("hl", currentLanguage)
+                                put("gl", "US")
+                                visitorData?.let { put("visitorData", it) }
+                            }
+                            putJsonObject("user") {
+                                put("lockedSafetyMode", false)
+                                // Only ever a value read back from a shell that
+                                // said it was signed in: Google answers an
+                                // `onBehalfOfUser` it cannot tie to the cookie
+                                // with 401, so a guess here would take the
+                                // whole app down rather than just history.
+                                dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                            }
+                            putJsonObject("request") { put("useSsl", true) }
+                        }
+                        bodyExtras()
+                    },
+                )
+            }.body<JsonObject>()
+        }
+
+        if (visitorData == null) {
+            visitorData = response["responseContext"]?.jsonObject
+                ?.get("visitorData")?.jsonPrimitive?.content
+        }
+        return response
     }
 
     /** First string value under [key] anywhere in [element], depth-first. */

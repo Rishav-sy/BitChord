@@ -1594,7 +1594,7 @@ private fun BitChordApp(
                 SearchFilter.ALBUMS
             }
             val query = listOfNotNull(name, subtitle).joinToString(" ")
-            val hit = YtMusicRepository.search(query, filter).getOrNull()
+            val hit = YtMusicRepository.searchAnonymous(query, filter).getOrNull()
                 ?.filterIsInstance<SearchResult.Browse>()
                 ?.firstOrNull()
                 ?.item

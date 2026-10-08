@@ -1927,7 +1927,7 @@ fun BitChordDesktopApp() {
     /** Replay counts artists by name, so the page has to be found from the name alone. */
     fun openArtistByName(name: String) {
         scope.launch {
-            val match = DesktopSearchClient.search(name, SearchFilter.ARTISTS)
+            val match = DesktopSearchClient.searchAnonymous(name, SearchFilter.ARTISTS)
                 .getOrDefault(emptyList())
                 .filterIsInstance<SearchResult.Browse>()
                 .map { it.item }
