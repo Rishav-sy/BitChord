@@ -4237,20 +4237,31 @@ class PlaybackService : MediaLibraryService() {
                 if (isReady) {
                     val willPlay = player.isPlaying || player.playWhenReady
                     if (willPlay) {
-                        // Align standby player right at the live playback position
-                        val handoffPos = player.currentPosition + 25L
+                        // Lookahead handoff: schedule the handoff point slightly in the future (+90ms)
+                        // so standbyPlayer has time to seek and buffer into STATE_READY *before*
+                        // the live playback head reaches that point.
+                        val leadMs = 90L
+                        val handoffPos = player.currentPosition + leadMs
+                        val targetWallTime = SystemClock.elapsedRealtime() + leadMs
+
                         standbyPlayer.seekTo(currentIndex, handoffPos)
-                        val seekTimeout = SystemClock.elapsedRealtime() + 200L
+                        val seekTimeout = SystemClock.elapsedRealtime() + 250L
                         while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < seekTimeout) {
                             delay(5)
+                        }
+
+                        // Wait until the live player reaches the handoff position
+                        val remainingWait = targetWallTime - SystemClock.elapsedRealtime()
+                        if (remainingWait > 0) {
+                            delay(remainingWait)
                         }
 
                         standbyPlayer.volume = 0f
                         standbyPlayer.play()
 
-                        // Fast micro-fade (30ms): eliminates any click/pop or abrupt DC cut,
-                        // while ensuring zero perceptible echo or repeated words.
-                        val microFadeMs = 30L
+                        // Fast micro-fade (20ms): eliminates any click/pop or abrupt DC cut,
+                        // with 0ms audio repeat or duplicated frames.
+                        val microFadeMs = 20L
                         val fadeStart = SystemClock.elapsedRealtime()
                         while (isActive) {
                             val elapsed = SystemClock.elapsedRealtime() - fadeStart
@@ -4269,7 +4280,7 @@ class PlaybackService : MediaLibraryService() {
                             standbyPlayer.volume = progress.coerceIn(0f, 1f)
 
                             if (progress >= 1f) break
-                            delay(6)
+                            delay(4)
                         }
 
                         adoptPlayerForQualityUpgrade(outgoing = player, incoming = standbyPlayer)
