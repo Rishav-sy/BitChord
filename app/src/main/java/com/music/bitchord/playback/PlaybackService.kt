@@ -2046,43 +2046,44 @@ class PlaybackService : MediaLibraryService() {
                 return@launch
             }
 
-            // Sync playback position with exact live position right before starting playback on standby
-            val livePos = activePlayer.currentPosition
-            val targetLivePos = (livePos + alignmentOffsetMs).coerceAtLeast(0L)
-            standbyPlayer.seekTo(currentIndex, targetLivePos)
-
             val willPlay = wasPlaying && activePlayer.playWhenReady
             if (willPlay) {
-                // Start it right away rather than waiting the seek out first:
-                // the outgoing player keeps running through every one of these
-                // steps, so each moment the incoming one spends frozen before
-                // its audio actually starts is a moment it enters the fade
-                // behind — a few hundred reads as a doubled word rather than
-                // as an alignment.
+                // Pre-seed standby with startup lead so it begins playing right at the live position
+                val livePos = activePlayer.currentPosition
+                val targetLivePos = (livePos + alignmentOffsetMs + 30L).coerceAtLeast(0L)
+                standbyPlayer.seekTo(currentIndex, targetLivePos)
                 standbyPlayer.play()
                 val runningTimeout = SystemClock.elapsedRealtime() + 600L
                 while (isActive && !standbyPlayer.isPlaying && SystemClock.elapsedRealtime() < runningTimeout) {
                     delay(10)
                 }
+
                 if (standbyPlayer.isPlaying) {
-                    // Now that it is producing audio — still at zero volume —
-                    // put it exactly where the outgoing player is *now*. The
-                    // near-seek lands inside the buffer it already holds, so
-                    // the drift accumulated above collapses to this seek's own
-                    // resume time, which is the one part that cannot go.
-                    standbyPlayer.seekTo(
-                        currentIndex,
-                        (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L),
-                    )
-                    val resyncTimeout = SystemClock.elapsedRealtime() + 300L
-                    while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < resyncTimeout) {
-                        delay(10)
+                    val baseSpeed = AppSettings.playbackSpeed.value
+                    val alignTimeout = SystemClock.elapsedRealtime() + 350L
+                    // Silent phase-lock loop: while standby volume is 0, smoothly eliminate any drift
+                    // using playbackSpeed without ever flushing the decoder or AudioTrack.
+                    while (isActive && SystemClock.elapsedRealtime() < alignTimeout) {
+                        val currentTargetPos = (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L)
+                        val drift = currentTargetPos - standbyPlayer.currentPosition
+                        if (abs(drift) <= 6L) {
+                            break
+                        }
+                        val targetSpeed = when {
+                            drift > 60L -> baseSpeed * 2.0f
+                            drift > 6L -> baseSpeed * 1.5f
+                            drift < -60L -> baseSpeed * 0.5f
+                            else -> baseSpeed * 0.75f
+                        }
+                        standbyPlayer.setPlaybackSpeed(targetSpeed)
+                        delay(12)
                     }
+                    standbyPlayer.setPlaybackSpeed(baseSpeed)
                 }
             } else {
-                // Paused swap: nothing is running on either side, so the first
-                // seek is already exact — it only has to finish before the
-                // fade adopts the player.
+                val livePos = activePlayer.currentPosition
+                val targetLivePos = (livePos + alignmentOffsetMs).coerceAtLeast(0L)
+                standbyPlayer.seekTo(currentIndex, targetLivePos)
                 val seekTimeout = SystemClock.elapsedRealtime() + 400L
                 while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < seekTimeout) {
                     delay(10)
@@ -4234,22 +4235,40 @@ class PlaybackService : MediaLibraryService() {
                 }
 
                 if (isReady) {
-                    standbyPlayer.seekTo(currentIndex, player.currentPosition)
                     val willPlay = player.isPlaying || player.playWhenReady
                     if (willPlay) {
+                        // Pre-seed standby with startup lead so it begins playing right at the live position
+                        val livePos = player.currentPosition
+                        standbyPlayer.seekTo(currentIndex, livePos + 30L)
                         standbyPlayer.play()
-                        val runningTimeout = SystemClock.elapsedRealtime() + 500L
+                        val runningTimeout = SystemClock.elapsedRealtime() + 600L
                         while (isActive && !standbyPlayer.isPlaying && SystemClock.elapsedRealtime() < runningTimeout) {
                             delay(10)
                         }
+
                         if (standbyPlayer.isPlaying) {
-                            standbyPlayer.seekTo(currentIndex, player.currentPosition)
-                            val resyncTimeout = SystemClock.elapsedRealtime() + 250L
-                            while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < resyncTimeout) {
-                                delay(10)
+                            val baseSpeed = AppSettings.playbackSpeed.value
+                            val alignTimeout = SystemClock.elapsedRealtime() + 350L
+                            // Silent phase-lock loop: while standby volume is 0, smoothly eliminate any drift
+                            // using playbackSpeed without ever flushing the decoder or AudioTrack.
+                            while (isActive && SystemClock.elapsedRealtime() < alignTimeout) {
+                                val drift = player.currentPosition - standbyPlayer.currentPosition
+                                if (abs(drift) <= 6L) {
+                                    break
+                                }
+                                val targetSpeed = when {
+                                    drift > 60L -> baseSpeed * 2.0f
+                                    drift > 6L -> baseSpeed * 1.5f
+                                    drift < -60L -> baseSpeed * 0.5f
+                                    else -> baseSpeed * 0.75f
+                                }
+                                standbyPlayer.setPlaybackSpeed(targetSpeed)
+                                delay(12)
                             }
+                            standbyPlayer.setPlaybackSpeed(baseSpeed)
                         }
                     } else {
+                        standbyPlayer.seekTo(currentIndex, player.currentPosition)
                         val seekTimeout = SystemClock.elapsedRealtime() + 300L
                         while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < seekTimeout) {
                             delay(10)
