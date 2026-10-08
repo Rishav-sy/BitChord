@@ -36,6 +36,10 @@ data class StreamFormat(
     val isDolbyAtmos: Boolean
         get() = codec in DOLBY_ATMOS_CODECS
 
+    /** Whether this is better than CD quality (past 16-bit or past 48kHz). */
+    val isHiRes: Boolean
+        get() = isLossless == true && ((bitDepth ?: 0) > 16 || (sampleRateHz ?: 0) > 48_000)
+
     /** "24-bit · 192 kHz", "FLAC", "320 kbps" — whichever parts are known. */
     val summary: String
         get() = if (isDolbyAtmos) "Dolby Atmos" else listOfNotNull(

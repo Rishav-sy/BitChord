@@ -194,7 +194,7 @@ class QobuzSource(
             val accounts = PoolAccountManager.getQobuzAccounts()
 
             for (acc in accounts) {
-                for (fmt in listOf(6, 7, 27)) {
+                for (fmt in listOf(27, 7, 6)) {
                     val stream = resolveQobuzDirect(trackId, fmt, acc)
                     if (stream != null) {
                         TrackLog.d(TAG, "  ✓ Qobuz standalone stream resolved at ${stream.format.summary}")
@@ -206,10 +206,12 @@ class QobuzSource(
             // 3. Fallback to Qobuz proxy APIs in pool
             val apis = PoolAccountManager.getQobuzApis()
             for (api in apis) {
-                val stream = resolveQobuzProxy(trackId, api.baseUrl)
-                if (stream != null) {
-                    TrackLog.d(TAG, "  ✓ Qobuz proxy stream resolved from ${api.baseUrl}")
-                    return@withContext stream
+                for (fmt in listOf(27, 7, 6)) {
+                    val stream = resolveQobuzProxy(trackId, api.baseUrl, fmt)
+                    if (stream != null) {
+                        TrackLog.d(TAG, "  ✓ Qobuz proxy stream resolved from ${api.baseUrl} at ${stream.format.summary}")
+                        return@withContext stream
+                    }
                 }
             }
 
@@ -273,9 +275,9 @@ class QobuzSource(
         }
     }
 
-    private fun resolveQobuzProxy(trackId: String, baseUrl: String): SourceStream? {
+    private fun resolveQobuzProxy(trackId: String, baseUrl: String, formatId: Int = 27): SourceStream? {
         return try {
-            val url = "$baseUrl/api/download-music?track_id=$trackId&quality=6"
+            val url = "$baseUrl/api/download-music?track_id=$trackId&quality=$formatId"
             val req = Request.Builder()
                 .url(url)
                 .header("User-Agent", QOBUZ_USER_AGENT)
@@ -292,13 +294,15 @@ class QobuzSource(
                     ?: json.optJSONObject("data")?.optString("url")?.takeIf { it.startsWith("http") }
                     ?: return null
 
+                val sampleRateHz = if (formatId == 27) 192000 else if (formatId == 7) 96000 else 44100
+                val bitDepth = if (formatId > 6) 24 else 16
                 SourceStream(
                     url = streamUrl,
                     format = StreamFormat(
                         codec = "flac",
-                        kbps = 1411,
-                        sampleRateHz = 44100,
-                        bitDepth = 16,
+                        kbps = if (bitDepth > 16) 2304 else 1411,
+                        sampleRateHz = sampleRateHz,
+                        bitDepth = bitDepth,
                     ),
                 )
             }

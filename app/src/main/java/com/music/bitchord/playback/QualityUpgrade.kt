@@ -105,7 +105,7 @@ object QualityUpgrade {
 
     internal fun needsLosslessFollowUp(format: StreamFormat): Boolean =
         SourceResolver.requestForNow() is StreamRequest.Lossless &&
-            format.isLossless != true &&
+            !format.isHiRes &&
             !format.isDolbyAtmos
 
     /**

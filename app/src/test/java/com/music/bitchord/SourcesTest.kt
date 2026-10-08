@@ -994,6 +994,30 @@ class SourcesTest {
         )
     }
 
+    /** 24-bit Hi-Res outranks 16-bit CD-quality lossless. */
+    @Test
+    fun `ranks a 24-bit hi-res lossless stream above a 16-bit standard lossless copy`() {
+        assertTrue(
+            SourceResolver.isBetter(
+                StreamFormat(codec = "flac", bitDepth = 24, sampleRateHz = 96000),
+                StreamFormat(codec = "flac", bitDepth = 16, sampleRateHz = 44100),
+            ),
+        )
+        assertFalse(
+            SourceResolver.isBetter(
+                StreamFormat(codec = "flac", bitDepth = 16, sampleRateHz = 44100),
+                StreamFormat(codec = "flac", bitDepth = 24, sampleRateHz = 96000),
+            ),
+        )
+        // Higher sample rate at same 24-bit depth also wins
+        assertTrue(
+            SourceResolver.isBetter(
+                StreamFormat(codec = "flac", bitDepth = 24, sampleRateHz = 192000),
+                StreamFormat(codec = "flac", bitDepth = 24, sampleRateHz = 96000),
+            ),
+        )
+    }
+
     /**
      * And the same answer mid-playback: a FLAC arriving over a playing Atmos
      * stream is a better copy of a mix the listener did not choose, which is a

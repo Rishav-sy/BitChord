@@ -4237,51 +4237,24 @@ class PlaybackService : MediaLibraryService() {
                 if (isReady) {
                     val willPlay = player.isPlaying || player.playWhenReady
                     if (willPlay) {
-                        // Pre-seed standby with startup lead so it begins playing right at the live position
-                        val livePos = player.currentPosition
-                        standbyPlayer.seekTo(currentIndex, livePos + 30L)
-                        standbyPlayer.play()
-                        val runningTimeout = SystemClock.elapsedRealtime() + 600L
-                        while (isActive && !standbyPlayer.isPlaying && SystemClock.elapsedRealtime() < runningTimeout) {
-                            delay(10)
-                        }
-
-                        if (standbyPlayer.isPlaying) {
-                            val baseSpeed = AppSettings.playbackSpeed.value
-                            val alignTimeout = SystemClock.elapsedRealtime() + 350L
-                            // Silent phase-lock loop: while standby volume is 0, smoothly eliminate any drift
-                            // using playbackSpeed without ever flushing the decoder or AudioTrack.
-                            while (isActive && SystemClock.elapsedRealtime() < alignTimeout) {
-                                val drift = player.currentPosition - standbyPlayer.currentPosition
-                                if (abs(drift) <= 6L) {
-                                    break
-                                }
-                                val targetSpeed = when {
-                                    drift > 60L -> baseSpeed * 2.0f
-                                    drift > 6L -> baseSpeed * 1.5f
-                                    drift < -60L -> baseSpeed * 0.5f
-                                    else -> baseSpeed * 0.75f
-                                }
-                                standbyPlayer.setPlaybackSpeed(targetSpeed)
-                                delay(12)
-                            }
-                            standbyPlayer.setPlaybackSpeed(baseSpeed)
-                        }
-                    } else {
-                        standbyPlayer.seekTo(currentIndex, player.currentPosition)
-                        val seekTimeout = SystemClock.elapsedRealtime() + 300L
+                        // Align standby player right at the live playback position
+                        val handoffPos = player.currentPosition + 25L
+                        standbyPlayer.seekTo(currentIndex, handoffPos)
+                        val seekTimeout = SystemClock.elapsedRealtime() + 200L
                         while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < seekTimeout) {
-                            delay(10)
+                            delay(5)
                         }
-                    }
 
-                    // Smooth equal-power crossfade transition (~380ms)
-                    val upgradeCrossfadeMs = 380L
-                    val fadeStart = SystemClock.elapsedRealtime()
-                    try {
+                        standbyPlayer.volume = 0f
+                        standbyPlayer.play()
+
+                        // Fast micro-fade (30ms): eliminates any click/pop or abrupt DC cut,
+                        // while ensuring zero perceptible echo or repeated words.
+                        val microFadeMs = 30L
+                        val fadeStart = SystemClock.elapsedRealtime()
                         while (isActive) {
                             val elapsed = SystemClock.elapsedRealtime() - fadeStart
-                            val progress = (elapsed.toFloat() / upgradeCrossfadeMs).coerceIn(0f, 1f)
+                            val progress = (elapsed.toFloat() / microFadeMs).coerceIn(0f, 1f)
 
                             if (this@PlaybackService.player !== player || player.currentMediaItemIndex != currentIndex) {
                                 standbyPlayer.stop()
@@ -4292,27 +4265,19 @@ class PlaybackService : MediaLibraryService() {
                                 return@withContext
                             }
 
-                            if (standbyPlayer.playWhenReady != player.playWhenReady) {
-                                standbyPlayer.playWhenReady = player.playWhenReady
-                            }
-
-                            val inGain = sin(progress * (PI / 2.0)).toFloat()
-                            val outGain = cos(progress * (PI / 2.0)).toFloat()
-                            standbyPlayer.volume = inGain
-                            player.volume = outGain
-                            val swapTrim = 1f / sqrt((inGain + outGain).coerceAtLeast(1f))
-                            loudnessA.setBlendTrim(swapTrim)
-                            loudnessB.setBlendTrim(swapTrim)
+                            player.volume = (1f - progress).coerceIn(0f, 1f)
+                            standbyPlayer.volume = progress.coerceIn(0f, 1f)
 
                             if (progress >= 1f) break
-                            delay(16)
+                            delay(6)
                         }
 
                         adoptPlayerForQualityUpgrade(outgoing = player, incoming = standbyPlayer)
                         swappedSeamlessly = true
-                    } finally {
-                        loudnessA.setBlendTrim(1f)
-                        loudnessB.setBlendTrim(1f)
+                    } else {
+                        standbyPlayer.seekTo(currentIndex, player.currentPosition)
+                        adoptPlayerForQualityUpgrade(outgoing = player, incoming = standbyPlayer)
+                        swappedSeamlessly = true
                     }
                 } else {
                     standbyPlayer.stop()

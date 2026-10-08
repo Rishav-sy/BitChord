@@ -663,7 +663,18 @@ object SourceResolver {
         // so this is the belt to that braces — it also covers the late answer
         // that arrives from a pass started before the Atmos stream landed.
         if (playing?.isDolbyAtmos == true && !candidate.isDolbyAtmos) return false
-        if (candidate.isLossless == true || candidate.isDolbyAtmos) return true
+        if (candidate.isDolbyAtmos) return true
+        if (playing?.isLossless == true) {
+            if (candidate.isLossless != true) return false
+            if (candidate.isHiRes && !playing.isHiRes) return true
+            val candBits = candidate.bitDepth ?: 16
+            val playingBits = playing.bitDepth ?: 16
+            if (candBits > playingBits) return true
+            val candRate = candidate.sampleRateHz ?: 44100
+            val playingRate = playing.sampleRateHz ?: 44100
+            return candBits >= playingBits && candRate > playingRate
+        }
+        if (candidate.isLossless == true) return true
         val gain = (candidate.kbps ?: return false) - (playing?.kbps ?: return false)
         return gain >= UPGRADE_MIN_GAIN_KBPS
     }
@@ -1086,6 +1097,15 @@ object SourceResolver {
         if (candidate.isDolbyAtmos != current.isDolbyAtmos) return candidate.isDolbyAtmos
         if (candidate.isLossless != current.isLossless) return candidate.isLossless == true
         if (candidate.isLossless == true && current.isLossless == true) {
+            val candHiRes = candidate.isHiRes
+            val currHiRes = current.isHiRes
+            if (candHiRes != currHiRes) return candHiRes
+            val candBits = candidate.bitDepth ?: 16
+            val currBits = current.bitDepth ?: 16
+            if (candBits != currBits) return candBits > currBits
+            val candRate = candidate.sampleRateHz ?: 44100
+            val currRate = current.sampleRateHz ?: 44100
+            if (candRate != currRate) return candRate > currRate
             return candidateRank < currentRank
         }
         val candKbps = candidate.kbps ?: 0

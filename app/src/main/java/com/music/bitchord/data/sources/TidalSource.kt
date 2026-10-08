@@ -224,9 +224,10 @@ class TidalSource(
 
     private fun resolveTidalStream(trackId: String, token: String): SourceStream? {
         val endpoints = listOf(
+            "https://api.tidal.com/v1/tracks/$trackId/playbackinfopostpaywall?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
+            "https://api.tidal.com/v1/tracks/$trackId/playbackinfo?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
             "https://api.tidal.com/v1/tracks/$trackId/playbackinfopostpaywall?audioquality=LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
             "https://api.tidal.com/v1/tracks/$trackId/playbackinfo?audioquality=LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
-            "https://api.tidal.com/v1/tracks/$trackId/playbackinfopostpaywall?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
         )
 
         for (endpoint in endpoints) {
@@ -286,13 +287,16 @@ class TidalSource(
 
                         val streamUrl = segmentUrlMatch ?: initUrlMatch
                         if (!streamUrl.isNullOrBlank()) {
+                            val isHiRes = endpoint.contains("HI_RES")
+                            val bitDepth = if (isHiRes) 24 else 16
+                            val sampleRateHz = if (isHiRes) 96000 else 44100
                             return SourceStream(
                                 url = streamUrl,
                                 format = StreamFormat(
                                     codec = "flac",
-                                    kbps = 1411,
-                                    sampleRateHz = 44100,
-                                    bitDepth = 16,
+                                    kbps = if (bitDepth > 16) 2304 else 1411,
+                                    sampleRateHz = sampleRateHz,
+                                    bitDepth = bitDepth,
                                 ),
                                 headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
                             )
