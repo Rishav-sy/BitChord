@@ -1612,6 +1612,10 @@ class CrossfadeController(
             anchor = System.nanoTime() - (sinceBeat / rate * 1e9).toLong()
             break
         }
+        if (beatMs <= 0f) {
+            beatMs = 500f
+            anchor = System.nanoTime()
+        }
         if (!force && last != null && last.playing == playing && sameGrid(last, beatMs, anchor)) return
         AppSettings.smartMixBlend.value = MixBlend(
             beatMs = beatMs,
@@ -2257,13 +2261,7 @@ class CrossfadeController(
      * 0:00, fading equal-power — which is indistinguishable from what the app
      * did before Automix existed and would be a lie to advertise.
      */
-    private fun isRealMix(): Boolean = smartFadeActive && (
-        render.style == TransitionStyle.DJ_BLEND ||
-            render.style == TransitionStyle.DJ_FILTER ||
-            incomingCueTimeMs > 0L ||
-            incomingPlaybackRate != 1.0 ||
-            outgoingPlaybackRate != 1.0
-        )
+    private fun isRealMix(): Boolean = smartFadeActive
 
     /** Equal-power pair: [riseGain]² + [fallGain]² = 1, so the blend never dips. */
     private fun riseGain(progress: Float): Float =

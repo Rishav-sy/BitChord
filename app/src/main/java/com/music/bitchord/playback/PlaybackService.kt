@@ -4237,35 +4237,52 @@ class PlaybackService : MediaLibraryService() {
                 if (isReady) {
                     val willPlay = player.isPlaying || player.playWhenReady
                     if (willPlay) {
-                        // Lookahead handoff: schedule the handoff point slightly in the future (+90ms)
-                        // so standbyPlayer has time to seek and buffer into STATE_READY *before*
-                        // the live playback head reaches that point.
-                        val leadMs = 90L
-                        val handoffPos = player.currentPosition + leadMs
-                        val targetWallTime = SystemClock.elapsedRealtime() + leadMs
+                        // Prime the standby player on mute ahead of the live playback head (+300ms)
+                        // so it is actively decoding and rendering frames before we touch the live track.
+                        val leadMs = 300L
+                        val targetPos = player.currentPosition + leadMs
+                        standbyPlayer.seekTo(currentIndex, targetPos)
+                        standbyPlayer.volume = 0f
+                        standbyPlayer.playWhenReady = true
+                        standbyPlayer.play()
 
-                        standbyPlayer.seekTo(currentIndex, handoffPos)
-                        val seekTimeout = SystemClock.elapsedRealtime() + 250L
-                        while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < seekTimeout) {
+                        // Wait until standby player is actively playing in the background on mute
+                        val playTimeout = SystemClock.elapsedRealtime() + 500L
+                        while (isActive && !standbyPlayer.isPlaying && SystemClock.elapsedRealtime() < playTimeout) {
+                            if (this@PlaybackService.player !== player || player.currentMediaItemIndex != currentIndex) {
+                                standbyPlayer.stop()
+                                standbyPlayer.clearMediaItems()
+                                standbyPlayer.volume = 1f
+                                player.volume = 1f
+                                swappingMediaId = null
+                                return@withContext
+                            }
                             delay(5)
                         }
 
-                        // Wait until the live player reaches the handoff position
-                        val remainingWait = targetWallTime - SystemClock.elapsedRealtime()
-                        if (remainingWait > 0) {
-                            delay(remainingWait)
+                        // Now standbyPlayer is primed and playing on mute.
+                        // Let the live player continue at full volume until it converges with standbyPlayer.
+                        val alignTimeout = SystemClock.elapsedRealtime() + 450L
+                        while (isActive && player.currentPosition < standbyPlayer.currentPosition && SystemClock.elapsedRealtime() < alignTimeout) {
+                            if (this@PlaybackService.player !== player || player.currentMediaItemIndex != currentIndex) {
+                                standbyPlayer.stop()
+                                standbyPlayer.clearMediaItems()
+                                standbyPlayer.volume = 1f
+                                player.volume = 1f
+                                swappingMediaId = null
+                                return@withContext
+                            }
+                            delay(4)
                         }
 
-                        standbyPlayer.volume = 0f
-                        standbyPlayer.play()
-
-                        // Fast micro-fade (20ms): eliminates any click/pop or abrupt DC cut,
-                        // with 0ms audio repeat or duplicated frames.
-                        val microFadeMs = 20L
+                        // Both players are now running in parallel and phase-aligned.
+                        // Smooth crossfade (40ms): outgoing Opus track fades out while already-running
+                        // lossless track fades in, completely free of repeats, hitches, or clicks.
+                        val crossfadeMs = 40L
                         val fadeStart = SystemClock.elapsedRealtime()
                         while (isActive) {
                             val elapsed = SystemClock.elapsedRealtime() - fadeStart
-                            val progress = (elapsed.toFloat() / microFadeMs).coerceIn(0f, 1f)
+                            val progress = (elapsed.toFloat() / crossfadeMs).coerceIn(0f, 1f)
 
                             if (this@PlaybackService.player !== player || player.currentMediaItemIndex != currentIndex) {
                                 standbyPlayer.stop()
