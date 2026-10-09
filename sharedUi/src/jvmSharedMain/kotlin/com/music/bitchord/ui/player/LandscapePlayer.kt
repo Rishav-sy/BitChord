@@ -8,6 +8,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -290,6 +294,41 @@ internal fun LandscapeArtwork(
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
     val casts = artLoaded || canvasRendered
+    var currentArtRequest by remember { mutableStateOf(artRequest) }
+    var outgoingArtRequest by remember { mutableStateOf<ImageRequest?>(null) }
+    val morphProgress = remember { Animatable(1f) }
+
+    LaunchedEffect(artRequest) {
+        if (currentArtRequest != artRequest) {
+            outgoingArtRequest = currentArtRequest
+            currentArtRequest = artRequest
+            morphProgress.snapTo(0f)
+        }
+    }
+    LaunchedEffect(outgoingArtRequest, artLoaded, canvasRendered) {
+        if (outgoingArtRequest != null && morphProgress.value < 1f) {
+            if (artLoaded || canvasRendered) {
+                morphProgress.animateTo(
+                    1f,
+                    animationSpec = tween(600, easing = CubicBezierEasing(0.2f, 0.0f, 0.2f, 1.0f)),
+                )
+                outgoingArtRequest = null
+            }
+        }
+    }
+    LaunchedEffect(outgoingArtRequest) {
+        if (outgoingArtRequest != null && morphProgress.value < 1f) {
+            delay(750)
+            if (morphProgress.value < 1f) {
+                morphProgress.animateTo(
+                    1f,
+                    animationSpec = tween(500, easing = CubicBezierEasing(0.2f, 0.0f, 0.2f, 1.0f)),
+                )
+                outgoingArtRequest = null
+            }
+        }
+    }
+
     Box(modifier = modifier) {
         Box(
             modifier = Modifier
@@ -313,7 +352,7 @@ internal fun LandscapeArtwork(
                 .background(Color.Black.copy(alpha = 0.18f)),
             contentAlignment = Alignment.Center,
         ) {
-            if (!artLoaded && !canvasRendered) {
+            if (!artLoaded && !canvasRendered && outgoingArtRequest == null) {
                 Icon(
                     imageVector = BitChordIcons.MusicNote,
                     contentDescription = null,
@@ -321,25 +360,61 @@ internal fun LandscapeArtwork(
                     modifier = Modifier.fillMaxSize(0.36f),
                 )
             }
-            AsyncImage(
-                model = artRequest,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                onState = onArtState,
-                // Not drawn under a clip that got there first — see the
-                // portrait sleeve's note on TextureView stacking order.
+            val outgoing = outgoingArtRequest
+            if (outgoing != null && morphProgress.value < 1f) {
+                val progress = morphProgress.value
+                val outAlpha = (1f - progress).coerceIn(0f, 1f)
+                val outScale = 1.0f + 0.06f * progress
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = outAlpha
+                            scaleX = outScale
+                            scaleY = outScale
+                        },
+                ) {
+                    AsyncImage(
+                        model = outgoing,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+            val isMorphing = outgoingArtRequest != null && morphProgress.value < 1f
+            val inProgress = morphProgress.value
+            val inAlpha = if (isMorphing) inProgress.coerceIn(0f, 1f) else 1f
+            val inScale = if (isMorphing) 0.94f + 0.06f * inProgress else 1f
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
-            )
-            canvas?.let { clip ->
-                CanvasArtworkPlayer(
-                    canvas = clip,
-                    isPlaying = isPlaying,
-                    pausedForTransition = pausedForTransition,
-                    onRenderedChanged = onCanvasRenderedChange,
-                    modifier = Modifier.fillMaxSize(),
+                    .graphicsLayer {
+                        if (isMorphing) {
+                            alpha = inAlpha
+                            scaleX = inScale
+                            scaleY = inScale
+                        }
+                    },
+            ) {
+                AsyncImage(
+                    model = artRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onState = onArtState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
                 )
+                canvas?.let { clip ->
+                    CanvasArtworkPlayer(
+                        canvas = clip,
+                        isPlaying = isPlaying,
+                        pausedForTransition = pausedForTransition,
+                        onRenderedChanged = onCanvasRenderedChange,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
         overlay()

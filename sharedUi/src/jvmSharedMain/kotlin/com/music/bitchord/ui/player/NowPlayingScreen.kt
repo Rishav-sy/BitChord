@@ -7,6 +7,7 @@ import androidx.compose.ui.unit.constrain
 import androidx.compose.ui.unit.Constraints
 import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.sharedui.resources.*
+import com.music.bitchord.data.canvas.CanvasArtwork
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.animation.Crossfade
@@ -27,6 +28,7 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -341,7 +343,15 @@ private const val ARTWORK_DRAG_SHRINK_SCALE = 0.94f
  * bounce is the signature.
  */
 private val ArtworkScaleEasing = CubicBezierEasing(0.215f, 0.61f, 0.355f, 1f)
+private val ArtworkMorphEasing = CubicBezierEasing(0.2f, 0.0f, 0.2f, 1.0f)
 private const val ARTWORK_SCALE_DURATION_MS = 500
+
+private data class SleeveVisualSnapshot(
+    val videoId: String,
+    val request: Any?,
+    val canvas: CanvasArtwork?,
+    val canvasFrame: ImageBitmap?,
+)
 
 /**
  * How far a tall screen is allowed to push the transport from the blocks either
@@ -1250,6 +1260,62 @@ fun NowPlayingScreen(
         snapshotFlow { art.loaded || canvasRenderedState.value }.first { it }
         heroSettled = true
         lastHeroSettled = true
+    }
+
+    // State for seamless Apple Music-style visual morph between track artworks/canvases
+    var currentSleeveSnapshot by remember {
+        mutableStateOf(SleeveVisualSnapshot(song.videoId, art.request, canvas, canvasFrame))
+    }
+    var outgoingSleeveSnapshot by remember {
+        mutableStateOf<SleeveVisualSnapshot?>(null)
+    }
+    val sleeveMorphProgress = remember { Animatable(1f) }
+
+    val activeSongId = song.videoId
+    val activeArtRequest = art.request
+    LaunchedEffect(activeSongId, activeArtRequest) {
+        if (currentSleeveSnapshot.videoId != activeSongId || currentSleeveSnapshot.request != activeArtRequest) {
+            outgoingSleeveSnapshot = currentSleeveSnapshot.copy(canvasFrame = canvasFrame)
+            currentSleeveSnapshot = SleeveVisualSnapshot(
+                videoId = activeSongId,
+                request = activeArtRequest,
+                canvas = canvas,
+                canvasFrame = null,
+            )
+            sleeveMorphProgress.snapTo(0f)
+        }
+    }
+
+    LaunchedEffect(outgoingSleeveSnapshot, art.loaded, canvasRendered, art.failed) {
+        if (outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f) {
+            val incomingReady = art.loaded || canvasRendered || art.failed
+            if (incomingReady) {
+                sleeveMorphProgress.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(
+                        durationMillis = 600,
+                        easing = ArtworkMorphEasing,
+                    ),
+                )
+                outgoingSleeveSnapshot = null
+            }
+        }
+    }
+
+    LaunchedEffect(outgoingSleeveSnapshot) {
+        if (outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f) {
+            delay(750)
+            if (sleeveMorphProgress.value < 1f) {
+                sleeveMorphProgress.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(
+                        durationMillis = 500,
+                        easing = ArtworkMorphEasing,
+                    ),
+                )
+                outgoingSleeveSnapshot = null
+            }
+        }
     }
     // The clip that gets the banner, if any. Hoisted because the sleeve keys
     // its opacity on exactly what is mounted here: both are decided in the same
@@ -2937,7 +3003,7 @@ fun NowPlayingScreen(
                             .background(Color.Black.copy(alpha = 0.18f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (!art.loaded && !canvasRendered) {
+                        if (!art.loaded && !canvasRendered && outgoingSleeveSnapshot == null) {
                             Icon(
                                 imageVector = BitChordIcons.MusicNote,
                                 contentDescription = null,
@@ -2952,34 +3018,86 @@ fun NowPlayingScreen(
                             )
                         }
                     }
-                    AsyncImage(
-                        model = art.request,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        onState = art::onState,
+
+                    // 1. Outgoing morph layer: keeps the previous track's art/canvas rendered during loading
+                    // and smoothly expands outward (1.0x -> 1.06x) while dissolving out.
+                    val outgoing = outgoingSleeveSnapshot
+                    if (outgoing != null && sleeveMorphProgress.value < 1f) {
+                        val progress = sleeveMorphProgress.value
+                        val outAlpha = (1f - progress).coerceIn(0f, 1f)
+                        val outScale = 1.0f + 0.06f * progress
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    alpha = outAlpha
+                                    scaleX = outScale
+                                    scaleY = outScale
+                                },
+                        ) {
+                            if (outgoing.canvasFrame != null) {
+                                Image(
+                                    bitmap = outgoing.canvasFrame,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else if (outgoing.request != null) {
+                                AsyncImage(
+                                    model = outgoing.request,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                    }
+
+                    // 2. Incoming morph layer: smoothly scales up from 0.94x into place while dissolving in.
+                    val isMorphing = outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f
+                    val inProgress = sleeveMorphProgress.value
+                    val inAlpha = if (isMorphing) inProgress.coerceIn(0f, 1f) else 1f
+                    val inScale = if (isMorphing) 0.94f + 0.06f * inProgress else 1f
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .drawWithContent { if (art.loaded || !canvasRendered) drawContent() },
-                    )
+                            .graphicsLayer {
+                                if (isMorphing) {
+                                    alpha = inAlpha
+                                    scaleX = inScale
+                                    scaleY = inScale
+                                }
+                            },
+                    ) {
+                        AsyncImage(
+                            model = art.request,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            onState = art::onState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .drawWithContent { if (art.loaded || !canvasRendered) drawContent() },
+                        )
 
-                    if (!heroMode && canvas != null) {
-                        WhileShown({ !collapsePastHalf }) {
-                            CanvasArtworkPlayer(
-                                canvas = canvas,
-                                isPlaying = isPlaying,
-                                pausedForTransition = lyricsOpen || queueOpen || queueDragging ||
-                                    collapseStarted || dockMoving,
-                                onRenderedChanged = { canvasRendered = it },
-                                onFrameCaptured = {
-                                    if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
-                                        canvasFrame = it
-                                    }
-                                },
-                                refreshFrameEveryMs = if (
-                                    tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving
-                                ) null else meshRefreshMs,
-                                modifier = Modifier.fillMaxSize(),
-                            )
+                        if (!heroMode && canvas != null) {
+                            WhileShown({ !collapsePastHalf }) {
+                                CanvasArtworkPlayer(
+                                    canvas = canvas,
+                                    isPlaying = isPlaying,
+                                    pausedForTransition = lyricsOpen || queueOpen || queueDragging ||
+                                        collapseStarted || dockMoving,
+                                    onRenderedChanged = { canvasRendered = it },
+                                    onFrameCaptured = {
+                                        if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
+                                            canvasFrame = it
+                                        }
+                                    },
+                                    refreshFrameEveryMs = if (
+                                        tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving
+                                    ) null else meshRefreshMs,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         }
                     }
                 }
