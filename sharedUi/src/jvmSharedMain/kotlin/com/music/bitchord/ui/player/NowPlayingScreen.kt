@@ -2952,43 +2952,34 @@ fun NowPlayingScreen(
                             )
                         }
                     }
-                    Crossfade(
-                        targetState = song.videoId to (art to canvas),
-                        animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
-                        label = "sleeveArtworkCrossfade",
-                    ) { (_, pair) ->
-                        val (targetArt, targetCanvas) = pair
-                        Box(Modifier.fillMaxSize()) {
-                            AsyncImage(
-                                model = targetArt.request,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                onState = targetArt::onState,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .drawWithContent { if (targetArt.loaded || !canvasRendered) drawContent() },
-                            )
+                    AsyncImage(
+                        model = art.request,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        onState = art::onState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .drawWithContent { if (art.loaded || !canvasRendered) drawContent() },
+                    )
 
-                            if (!heroMode && targetCanvas != null) {
-                                WhileShown({ !collapsePastHalf }) {
-                                    CanvasArtworkPlayer(
-                                        canvas = targetCanvas,
-                                        isPlaying = isPlaying,
-                                        pausedForTransition = lyricsOpen || queueOpen || queueDragging ||
-                                            collapseStarted || dockMoving,
-                                        onRenderedChanged = { canvasRendered = it },
-                                        onFrameCaptured = {
-                                            if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
-                                                canvasFrame = it
-                                            }
-                                        },
-                                        refreshFrameEveryMs = if (
-                                            tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving
-                                        ) null else meshRefreshMs,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                }
-                            }
+                    if (!heroMode && canvas != null) {
+                        WhileShown({ !collapsePastHalf }) {
+                            CanvasArtworkPlayer(
+                                canvas = canvas,
+                                isPlaying = isPlaying,
+                                pausedForTransition = lyricsOpen || queueOpen || queueDragging ||
+                                    collapseStarted || dockMoving,
+                                onRenderedChanged = { canvasRendered = it },
+                                onFrameCaptured = {
+                                    if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
+                                        canvasFrame = it
+                                    }
+                                },
+                                refreshFrameEveryMs = if (
+                                    tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving
+                                ) null else meshRefreshMs,
+                                modifier = Modifier.fillMaxSize(),
+                            )
                         }
                     }
                 }
