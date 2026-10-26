@@ -1679,7 +1679,11 @@ fun NowPlayingScreen(
                 onDismiss = { lyricsShare = null },
             )
         }
-        MixViewOverlay(hazeState = playerHaze)
+        MixViewOverlay(
+            hazeState = playerHaze,
+            isPlaying = isPlaying,
+            onPlayPause = onPlayPause,
+        )
     }
 
     // A landscape window — a tablet, or a phone on its side — takes an entirely

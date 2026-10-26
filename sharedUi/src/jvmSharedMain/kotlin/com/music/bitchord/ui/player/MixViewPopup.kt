@@ -33,8 +33,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -142,6 +150,8 @@ internal fun MixViewPopup(
     visible: Boolean,
     /** False once the blend has finished: the popup stays up on its last frame, without a playhead. */
     live: Boolean,
+    isPlaying: Boolean = false,
+    onPlayPause: () -> Unit = {},
     hazeState: HazeState,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -203,21 +213,72 @@ internal fun MixViewPopup(
                     .padding(vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                MixViewContent(view, progress, live)
+                MixViewContent(view, progress, live, isPlaying, onPlayPause)
             }
         }
     }
 }
 
-/** The popup's body: the outgoing track, both decks, the incoming track. */
+/** The popup's body: the outgoing track, both decks, the incoming track, and the presets row. */
 @Composable
-internal fun MixViewContent(view: MixTransitionView, progress: State<Float>, live: Boolean = true) {
+internal fun MixViewContent(
+    view: MixTransitionView,
+    progress: State<Float>,
+    live: Boolean = true,
+    isPlaying: Boolean = false,
+    onPlayPause: () -> Unit = {},
+) {
+    var selectedPreset by remember { mutableStateOf("Custom") }
+    val presets = remember { listOf("Custom", "✦ Auto", "Fade", "Rise") }
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         DeckHeader(view.outgoing, Modifier.padding(horizontal = 14.dp))
         Spacer(Modifier.height(12.dp))
-        MixDecks(view, progress, live)
+        MixDecks(view, progress, live, isPlaying, onPlayPause, preset = selectedPreset)
         Spacer(Modifier.height(12.dp))
         DeckHeader(view.incoming, Modifier.padding(horizontal = 14.dp))
+        Spacer(Modifier.height(16.dp))
+
+        Text(
+            text = "Presets",
+            color = SecondaryText,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            presets.forEach { preset ->
+                val isSelected = selectedPreset == preset
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(
+                            if (isSelected) Color.White else Color(0xFF222222)
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { selectedPreset = preset },
+                        )
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = preset,
+                        color = if (isSelected) Color.Black else SecondaryText,
+                        fontSize = 13.sp,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -292,9 +353,21 @@ private fun DeckHeader(deck: MixDeck, modifier: Modifier = Modifier) {
 
 /** The two waveform decks, the transition frame across them, and the blend's length under them. */
 @Composable
-private fun MixDecks(view: MixTransitionView, progress: State<Float>, live: Boolean) {
+private fun MixDecks(
+    view: MixTransitionView,
+    progress: State<Float>,
+    live: Boolean,
+    isPlaying: Boolean = false,
+    onPlayPause: () -> Unit = {},
+    preset: String = "Custom",
+) {
     val outColors = rememberWaveColors(view.outgoing.artworkUrl)
     val inColors = rememberWaveColors(view.incoming.artworkUrl)
+    var expanded by remember { mutableStateOf(false) }
+    var selectedBars by remember(view.beats) {
+        mutableIntStateOf((view.beats / 4f).roundToInt().coerceAtLeast(1))
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
@@ -316,8 +389,8 @@ private fun MixDecks(view: MixTransitionView, progress: State<Float>, live: Bool
             val deckHeight = DeckHeight.toPx()
             val topDeck = DeckTop.toPx()
             val bottomDeck = size.height - DeckBottomInset.toPx() - deckHeight
-            drawDeck(view, outgoing = true, top = topDeck, height = deckHeight, colors = outColors)
-            drawDeck(view, outgoing = false, top = bottomDeck, height = deckHeight, colors = inColors)
+            drawDeck(view, outgoing = true, top = topDeck, height = deckHeight, colors = outColors, preset = preset)
+            drawDeck(view, outgoing = false, top = bottomDeck, height = deckHeight, colors = inColors, preset = preset)
             // The playhead, through both decks at once: they are the same moment.
             // Gone once the blend is over rather than parked at its end.
             if (live) {
@@ -330,40 +403,108 @@ private fun MixDecks(view: MixTransitionView, progress: State<Float>, live: Bool
                 )
             }
         }
-        Row(
+
+        // Floating central play/pause button centered between the two decks
+        val midX = width * ((BoxStart + BoxEnd) / 2f)
+        val midY = 135.dp
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .offset(x = midX - 19.dp, y = midY - 19.dp)
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF1E1E1E))
+                .border(1.5.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onPlayPause,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
+        // Duration / bar selector chip with dropdown menu
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .offset(x = width * ((BoxStart + BoxEnd) / 2f) - width / 2)
-                .clip(RoundedCornerShape(14.dp))
-                .background(ChipColor)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
+                .offset(x = width * ((BoxStart + BoxEnd) / 2f) - width / 2),
+            contentAlignment = Alignment.Center,
         ) {
-            val bars = (view.beats / 4f).roundToInt().coerceAtLeast(1)
-            Text(
-                text = when {
-                    view.beats <= 0 -> stringResource(Res.string.mix_view_seconds, (view.outEnd - view.outStart).roundToInt())
-                    bars == 1 -> stringResource(Res.string.mix_view_one_bar)
-                    else -> stringResource(Res.string.mix_view_bars, bars)
-                },
-                color = Color.White,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-            )
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(ChipColor)
+                    .clickable { expanded = true }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = when {
+                        view.beats <= 0 -> stringResource(Res.string.mix_view_seconds, (view.outEnd - view.outStart).roundToInt())
+                        selectedBars == 1 -> stringResource(Res.string.mix_view_one_bar)
+                        else -> stringResource(Res.string.mix_view_bars, selectedBars)
+                    },
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = "Select Bars",
+                    tint = SecondaryText,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(Color(0xFF222222)),
+            ) {
+                listOf(2, 4, 8, 16).forEach { barOption ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = stringResource(Res.string.mix_view_bars, barOption),
+                                color = if (selectedBars == barOption) Color.White else SecondaryText,
+                                fontWeight = if (selectedBars == barOption) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        },
+                        onClick = {
+                            selectedBars = barOption
+                            expanded = false
+                        },
+                    )
+                }
+            }
         }
     }
 }
 
 /**
- * One deck: the waveform across the whole width, its frame over the blend,
- * the beat grid inside the frame and the fader line along it.
+ * One deck: the waveform across the whole width, its symmetric frame over the blend,
+ * the beat grid inside the frame and the multi-band fader curves along it.
  *
- * The outgoing frame is open on the left — the track was already playing — and
- * the incoming one on the right, where it plays on; the fader runs along the
- * frame's edge between full (the centre line) and silent (its floor).
+ * The outgoing frame is open on the left (top, right, bottom) and
+ * the incoming one on the right (top, left, bottom).
+ * The 3 gold fader curves show Highs, Mids, and Lows (with 90° bass swap step).
  */
-private fun DrawScope.drawDeck(view: MixTransitionView, outgoing: Boolean, top: Float, height: Float, colors: WaveColors) {
+private fun DrawScope.drawDeck(
+    view: MixTransitionView,
+    outgoing: Boolean,
+    top: Float,
+    height: Float,
+    colors: WaveColors,
+    preset: String = "Custom",
+) {
     val deck = if (outgoing) view.outgoing else view.incoming
     val boxLeft = size.width * BoxStart
     val boxRight = size.width * BoxEnd
@@ -395,7 +536,7 @@ private fun DrawScope.drawDeck(view: MixTransitionView, outgoing: Boolean, top: 
     if (bins > 0 && deck.waveEnd > deck.waveStart) {
         val secondsPerBin = (deck.waveEnd - deck.waveStart) / bins
         val column = (secondsPerBin * pxPerSecond).toFloat()
-        val swap = view.bassSwapAt
+        val swap = if (preset == "Fade") -1f else view.bassSwapAt
         for (bin in 0 until bins) {
             val x = ((deck.waveStart + bin * secondsPerBin - shownStart) * pxPerSecond).toFloat()
             if (x + column < 0f || x > size.width) continue
@@ -429,31 +570,88 @@ private fun DrawScope.drawDeck(view: MixTransitionView, outgoing: Boolean, top: 
         )
     }
 
-    // The frame: top edge, and the side where this track starts or ends.
+    // The symmetric frame: 3-sided blue bracket.
+    // Outgoing is open on the left: top, right, bottom.
+    // Incoming is open on the right: top, left, bottom.
     val frame = Stroke(width = 2.5.dp.toPx(), join = StrokeJoin.Round)
     val edge = Path().apply {
         if (outgoing) {
             moveTo(boxLeft, top)
             lineTo(boxRight, top)
             lineTo(boxRight, floor)
+            lineTo(boxLeft, floor)
         } else {
-            moveTo(boxLeft, floor)
+            moveTo(boxRight, top)
             lineTo(boxLeft, top)
-            lineTo(boxRight, top)
+            lineTo(boxLeft, floor)
+            lineTo(boxRight, floor)
         }
     }
     drawPath(edge, FrameColor, style = frame)
 
-    // The fader, along the frame.
-    if (fader.isNotEmpty()) {
-        val line = Path()
-        fader.forEachIndexed { index, level ->
-            val x = boxLeft + boxWidth * index / (fader.size - 1).coerceAtLeast(1)
-            val y = floor - (floor - centre) * level
-            if (index == 0) line.moveTo(x, y) else line.lineTo(x, y)
+    // Multi-band fader curves in gold/yellow:
+    // 1. Highs: smooth gentle roll-off / roll-in curve
+    // 2. Mids: equal-power sigmoidal S-curve
+    // 3. Lows: bass swap curve with a sharp 90-degree step
+    val faderStroke = Stroke(width = 1.8.dp.toPx(), join = StrokeJoin.Round)
+    val numSteps = 48
+
+    // Curve 1: Highs
+    val highPath = Path()
+    for (i in 0..numSteps) {
+        val t = i.toFloat() / numSteps
+        val x = boxLeft + boxWidth * t
+        val rawLevel = if (outgoing) {
+            (1f - t * 0.85f).coerceIn(0f, 1f) * (1f - t).coerceIn(0f, 1f)
+        } else {
+            (t * 0.85f + 0.15f * t * t).coerceIn(0f, 1f)
         }
-        drawPath(line, FaderColor, style = frame)
+        val level = if (preset == "Rise" && !outgoing) (rawLevel * 1.15f).coerceIn(0f, 1f) else rawLevel
+        val y = floor - (floor - centre) * level.coerceIn(0f, 1f)
+        if (i == 0) highPath.moveTo(x, y) else highPath.lineTo(x, y)
     }
+    drawPath(highPath, FaderColor.copy(alpha = 0.85f), style = faderStroke)
+
+    // Curve 2: Mids (Equal power S-curve)
+    if (fader.isNotEmpty()) {
+        val midPath = Path()
+        for (i in 0..numSteps) {
+            val t = i.toFloat() / numSteps
+            val x = boxLeft + boxWidth * t
+            val level = sample(fader, t)
+            val y = floor - (floor - centre) * level
+            if (i == 0) midPath.moveTo(x, y) else midPath.lineTo(x, y)
+        }
+        drawPath(midPath, FaderColor, style = faderStroke)
+    }
+
+    // Curve 3: Lows (Bass swap right-angle step)
+    val bassSwap = if (preset == "Fade") -1f else if (view.bassSwapAt >= 0f) view.bassSwapAt else 0.5f
+    val lowPath = Path()
+    if (bassSwap >= 0f) {
+        val swapX = boxLeft + boxWidth * bassSwap
+        if (outgoing) {
+            lowPath.moveTo(boxLeft, centre)
+            lowPath.lineTo(swapX, centre)
+            lowPath.lineTo(swapX, floor)
+            lowPath.lineTo(boxRight, floor)
+        } else {
+            lowPath.moveTo(boxLeft, floor)
+            lowPath.lineTo(swapX, floor)
+            lowPath.lineTo(swapX, centre)
+            lowPath.lineTo(boxRight, centre)
+        }
+    } else {
+        // Smooth fade if no bass swap
+        if (outgoing) {
+            lowPath.moveTo(boxLeft, centre)
+            lowPath.lineTo(boxRight, floor)
+        } else {
+            lowPath.moveTo(boxLeft, floor)
+            lowPath.lineTo(boxRight, centre)
+        }
+    }
+    drawPath(lowPath, FaderColor, style = faderStroke)
 }
 
 /**
@@ -619,7 +817,11 @@ internal object MixViewRequest {
  * and not the player it is mounted in.
  */
 @Composable
-internal fun MixViewOverlay(hazeState: HazeState) {
+internal fun MixViewOverlay(
+    hazeState: HazeState,
+    isPlaying: Boolean = false,
+    onPlayPause: () -> Unit = {},
+) {
     val view by PlayerSettings.smartMixView.collectAsStateWithLifecycle()
     var held by remember { mutableStateOf<MixTransitionView?>(null) }
     val open = MixViewRequest.open
@@ -643,6 +845,8 @@ internal fun MixViewOverlay(hazeState: HazeState) {
         view = shown,
         visible = open,
         live = current != null,
+        isPlaying = isPlaying,
+        onPlayPause = onPlayPause,
         hazeState = hazeState,
         onDismiss = { MixViewRequest.open = false },
     )
