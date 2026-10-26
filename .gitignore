@@ -50,3 +50,6 @@ AGENTS.md
 
 # Claude Code session files (launch configs, worktrees)
 .claude/
+
+# Web prototypes
+canvas-morph-prototype/
