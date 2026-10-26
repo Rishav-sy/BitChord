@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.icons
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -363,6 +364,28 @@ object BitChordIcons {
         }.build()
     }
 
+    /**
+     * Two beamed notes, filled, sitting level — what the lyrics show through an
+     * instrumental section. Apart from [MusicNote], which stays the artwork
+     * placeholder elsewhere.
+     */
+    val Instrumental: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_instrumental",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).addPath(
+            pathData = addPathNodes(
+                "M19.952 1.651a.75.75 0 0 1 .298.599V16.303a3 3 0 0 1-2.176 2.884l-1.32.377a2.553 2.553 0 1 1-1.403-4.909" +
+                    "l2.311-.66a1.5 1.5 0 0 0 1.088-1.442V6.994l-9 2.572v9.737a3 3 0 0 1-2.176 2.884l-1.32.377" +
+                    "a2.553 2.553 0 1 1-1.402-4.909l2.31-.66a1.5 1.5 0 0 0 1.088-1.442V5.25a.75.75 0 0 1 .544-.721" +
+                    "l10.5-3a.75.75 0 0 1 .658.122Z",
+            ),
+            pathFillType = PathFillType.EvenOdd,
+            fill = stroke,
+        ).build()
+    }
+
     /** Speech bubble with two lines of words. */
     val Lyrics: ImageVector by lazy {
         ImageVector.Builder(
@@ -445,6 +468,44 @@ object BitChordIcons {
                 arcToRelative(4.5f, 4.5f, 0f, isMoreThanHalf = false, isPositiveArc = true, 8.8f, -1.5f)
                 arcToRelative(4.5f, 4.5f, 0f, isMoreThanHalf = false, isPositiveArc = true, 8.8f, 1.5f)
                 curveTo(20.8f, 14.6f, 12f, 20f, 12f, 20f)
+                close()
+            }
+        }.build()
+
+    /**
+     * Favorite, the way Apple Music draws it: a five-point star whose tips
+     * are softened by the round stroke join rather than cut to a point.
+     * Filled when set, for the reason [Heart] gives.
+     */
+    val Star: ImageVector by lazy { star("bc_star", filled = false) }
+
+    val StarFilled: ImageVector by lazy { star("bc_star_filled", filled = true) }
+
+    private fun star(name: String, filled: Boolean): ImageVector =
+        ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = STROKE,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+                fill = if (filled) stroke else null,
+            ) {
+                // Outer radius 9, inner 0.44 of it, centred on its own bounds
+                // so the shorter lower half doesn't sit the star high.
+                moveTo(12f, 3.86f)
+                lineTo(14.33f, 9.66f)
+                lineTo(20.56f, 10.08f)
+                lineTo(15.77f, 14.08f)
+                lineTo(17.29f, 20.14f)
+                lineTo(12f, 16.82f)
+                lineTo(6.71f, 20.14f)
+                lineTo(8.23f, 14.08f)
+                lineTo(3.44f, 10.08f)
+                lineTo(9.67f, 9.66f)
                 close()
             }
         }.build()

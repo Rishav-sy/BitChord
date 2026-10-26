@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.components.trackArtSize
+import androidx.compose.ui.layout.ContentScale
 import com.music.bitchord.R
 
 import android.net.Uri
@@ -30,7 +32,9 @@ import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Downloading
@@ -39,6 +43,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.PlaylistRemove
@@ -73,6 +78,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.music.bitchord.ui.player.ThinSlider
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -100,11 +112,11 @@ import java.util.Locale
  * always the fallback for "I meant to do something with this song".
  *
  * Everything that writes to the account is hidden outright when [signedIn] is
- * false rather than shown and refused. The same goes for a track that is
- * playing from a local file or a finished download (`song.localUri != null`):
- * rating, playlists, downloading it again and sharing all assume a YouTube
- * identity the file doesn't carry, so those rows drop out regardless of
- * [signedIn].
+ * false rather than shown and refused. A track playing from a local file or a
+ * finished download (`song.localUri != null`) carries no YouTube identity to
+ * rate, fetch again or share, so it gets the offline player's rows instead:
+ * Like and Add to playlist against the device's own playlists (see
+ * [com.music.bitchord.data.OfflinePlaylists]), signed in or not.
  *
  * [showSleepTimer] and [onShare] are the player's extras: a sleep timer isn't a
  * property of some row in a list, so it only appears where it means something.
@@ -143,6 +155,16 @@ fun SongActionsSheet(
     onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
     onRemoveFromPlaylist: (() -> Unit)? = null,
+    /**
+     * Takes this track out of the song cache. Null hides the row — the caller
+     * passes one only while the cache actually holds some of it.
+     */
+    onRemoveFromCache: (() -> Unit)? = null,
+    /**
+     * Removes this track from the account's listening history. Null hides the
+     * row — the History screen passes one only when the menu is opened there.
+     */
+    onRemoveFromHistory: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
     /**
      * Sends the playing track back to YouTube's own upload, and keeps it there.
@@ -163,13 +185,17 @@ fun SongActionsSheet(
     upgradeQualityInProgress: Boolean = false,
     /**
      * Switches the playing track between its video and audio-only cuts. Null
-     * hides the row — offered only from the player, and only once an
-     * alternate cut is known to exist. See
+     * hides the row — offered for the playing track only. See
      * [com.music.bitchord.playback.PlaybackService.smoothSwapCurrentTrackVersion].
      */
     onToggleAudioVersion: (() -> Unit)? = null,
     /** Which cut is playing now, so the row can offer the other one. */
     isAudioVersion: Boolean = false,
+    /**
+     * A switch already looked for the other cut and found none: the row says
+     * so, greyed out, rather than offering the same dead end again.
+     */
+    audioVersionMissing: Boolean = false,
     onShare: (() -> Unit)? = null,
     /**
      * Copies what the app logged while starting this track. Null everywhere
@@ -195,8 +221,11 @@ fun SongActionsSheet(
      */
     presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
 ) {
+    var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
     var pickingSleepTimer by remember { mutableStateOf(false) }
     val menu = presentation == SongActionsPresentation.Menu
+    // The held-row menu has no pages to swap, so there Song Info opens as a dialog.
+    if (menu && showingSongInfo) SongInfoDialog(song) { showingSongInfo = false }
     // Read from the thumbnail the row that opened this sheet was already
     // showing, not a larger copy of it: the tint is a blur and a handful of
     // swatches, neither of which a bigger image improves, and going back for
@@ -253,16 +282,50 @@ fun SongActionsSheet(
                 ActionRow(
                     icon = if (isAudioVersion) Icons.Rounded.Videocam else BitChordIcons.MusicNote,
                     label = stringResource(
-                        if (isAudioVersion) R.string.convert_to_video else R.string.convert_to_audio,
+                        when {
+                            audioVersionMissing && isAudioVersion -> R.string.no_video_version
+                            audioVersionMissing -> R.string.no_audio_version
+                            isAudioVersion -> R.string.convert_to_video
+                            else -> R.string.convert_to_audio
+                        },
                     ),
                     accent = palette.accent,
+                    enabled = !audioVersionMissing,
                     onClick = it,
                 )
             }
             GroupSeparator(palette)
         }
 
-        if (signedIn && !isOffline) {
+        if (isOffline) {
+            // The offline player's own pair: a heart that files the track
+            // under this device's Liked playlist, and the device's playlists.
+            // [likeStatus] is that playlist's answer here, not YouTube's, and
+            // neither needs an account. No dislike — there is no
+            // recommendation feed on the device for one to steer.
+            ActionRow(
+                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
+                tint = if (liked) palette.accent else null,
+                accent = palette.accent,
+                onClick = onToggleLike,
+            )
+            ActionRow(
+                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                label = stringResource(R.string.add_to_playlist),
+                accent = palette.accent,
+                onClick = onAddToPlaylist,
+            )
+            onRemoveFromPlaylist?.let {
+                ActionRow(
+                    icon = Icons.Rounded.PlaylistRemove,
+                    label = stringResource(R.string.remove_from_playlist),
+                    accent = palette.accent,
+                    onClick = it,
+                )
+            }
+            GroupSeparator(palette)
+        } else if (signedIn) {
             ActionRow(
                 icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
@@ -294,7 +357,23 @@ fun SongActionsSheet(
             GroupSeparator(palette)
         }
 
+        onRemoveFromHistory?.let {
+            ActionRow(
+                icon = Icons.Rounded.History,
+                label = stringResource(R.string.remove_from_history),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
         DownloadRow(song, palette, isOffline, onDownload)
+        onRemoveFromCache?.let {
+            ActionRow(
+                icon = Icons.Rounded.DeleteSweep,
+                label = stringResource(R.string.remove_from_cache),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
         WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
         ActionRow(
             icon = Icons.Rounded.Radio,
@@ -333,6 +412,9 @@ fun SongActionsSheet(
                 stringResource(R.string.open_artist),
                 accent = palette.accent,
             ) { onOpenArtist(id) }
+        }
+        ActionRow(Icons.Rounded.Info, stringResource(R.string.song_info), accent = palette.accent) {
+            showingSongInfo = true
         }
         if (showSleepTimer) {
             ActionRow(
@@ -377,6 +459,10 @@ fun SongActionsSheet(
     TintedSheet(palette = palette, imageUrl = song.thumbnailUrl, modifier = modifier) {
         if (pickingSleepTimer) {
             SleepTimerPicker(palette = palette, onBack = { pickingSleepTimer = false })
+            return@TintedSheet
+        }
+        if (showingSongInfo) {
+            SongInfoPage(song = song, palette = palette, onBack = { showingSongInfo = false })
             return@TintedSheet
         }
 
@@ -649,38 +735,33 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
     val chosen by SleepTimer.minutes.collectAsStateWithLifecycle()
     val afterTrack by SleepTimer.afterTrack.collectAsStateWithLifecycle()
     val countdown = sleepTimerCountdown()
+    // A running timer no preset matches is a custom one: the row ticks and names it.
+    val custom = chosen?.takeIf { it !in SleepTimer.PRESETS }
+    var pickingCustom by remember { mutableStateOf(false) }
+
+    if (pickingCustom) {
+        CustomSleepTimerPage(
+            palette = palette,
+            initialMinutes = custom ?: 90,
+            onBack = { pickingCustom = false },
+            onStart = { minutes ->
+                SleepTimer.start(minutes)
+                onBack()
+            },
+        )
+        return
+    }
 
     Column(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 8.dp, end = 22.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = stringResource(R.string.back),
-                    tint = MaterialTheme.colorScheme.onBackground,
-                )
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.sleep_timer),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = when {
-                        countdown != null -> stringResource(R.string.pause_countdown, countdown)
-                        afterTrack -> stringResource(R.string.pause_after_song)
-                        else -> stringResource(R.string.pause_after_a_while)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        SleepTimerHeader(
+            title = stringResource(R.string.sleep_timer),
+            subtitle = when {
+                countdown != null -> stringResource(R.string.pause_countdown, countdown)
+                afterTrack -> stringResource(R.string.pause_after_song)
+                else -> stringResource(R.string.pause_after_a_while)
+            },
+            onBack = onBack,
+        )
         HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
 
         // Finishing the song is the one people reach for at the end of a
@@ -707,6 +788,13 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
                 onBack()
             }
         }
+        SleepOption(
+            label = custom?.let {
+                stringResource(R.string.sleep_timer_custom) + " · " + sleepDuration(it)
+            } ?: stringResource(R.string.sleep_timer_custom),
+            selected = custom != null,
+            accent = palette.accent,
+        ) { pickingCustom = true }
         if (chosen != null || afterTrack) {
             ActionRow(Icons.Rounded.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
@@ -715,6 +803,134 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/** Back arrow, title and a line under it — the top of both sleep timer pages. */
+@Composable
+private fun SleepTimerHeader(title: String, subtitle: String, onBack: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, end = 22.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(
+                Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = stringResource(R.string.back),
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Any length up to twelve hours, set the way the player's lyrics offset is:
+ * a large readout over the player's own thin slider, with − and + for a
+ * single step either way. A page of this sheet rather than an alert on top
+ * of it, so it stays in the track's colours like the presets it sits with.
+ */
+@Composable
+private fun CustomSleepTimerPage(
+    palette: ArtworkPalette,
+    initialMinutes: Int,
+    onBack: () -> Unit,
+    onStart: (Int) -> Unit,
+) {
+    var minutes by remember { mutableIntStateOf(initialMinutes) }
+    val foreground = MaterialTheme.colorScheme.onBackground
+
+    Column(Modifier.fillMaxWidth()) {
+        SleepTimerHeader(
+            title = stringResource(R.string.sleep_timer_custom),
+            subtitle = stringResource(R.string.pause_after_a_while),
+            onBack = onBack,
+        )
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+
+        Text(
+            text = sleepDuration(minutes),
+            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = foreground,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 24.dp, bottom = 8.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            StepButton(
+                label = "−",
+                contentDescription = stringResource(R.string.less),
+                enabled = minutes > SleepTimer.STEP_MINUTES,
+            ) { minutes -= SleepTimer.STEP_MINUTES }
+            ThinSlider(
+                value = SleepTimer.fractionOf(minutes),
+                onValueChange = { minutes = SleepTimer.minutesAt(it) },
+                idleHeight = 6.dp,
+                activeHeight = 10.dp,
+                activeColor = foreground.copy(alpha = 0.92f),
+                inactiveColor = foreground.copy(alpha = 0.26f),
+                modifier = Modifier.weight(1f),
+            )
+            StepButton(
+                label = "+",
+                contentDescription = stringResource(R.string.more),
+                enabled = minutes < SleepTimer.MAX_MINUTES,
+            ) { minutes += SleepTimer.STEP_MINUTES }
+        }
+        Spacer(Modifier.height(16.dp))
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+        ActionRow(Icons.Rounded.Bedtime, stringResource(R.string.start_sleep_timer), accent = palette.accent) {
+            onStart(minutes)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun StepButton(
+    label: String,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.semantics { this.contentDescription = contentDescription },
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (enabled) 0.85f else 0.25f),
+        )
+    }
+}
+
+/** "45 min", or "1h 25m" from an hour up. */
+@Composable
+private fun sleepDuration(minutes: Int): String = if (minutes >= 60) {
+    stringResource(R.string.hours_minutes_short, minutes / 60, minutes % 60)
+} else {
+    stringResource(R.string.minutes_short, minutes)
 }
 
 @Composable
@@ -915,8 +1131,9 @@ internal fun SheetTrackHeader(
         AsyncImage(
             model = song.artworkAt(ROW_ART_PX),
             contentDescription = null,
+            contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(52.dp)
+                .trackArtSize(52.dp, song.isVideo)
                 .clip(RoundedCornerShape(8.dp))
                 .thumbnailBorder(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),

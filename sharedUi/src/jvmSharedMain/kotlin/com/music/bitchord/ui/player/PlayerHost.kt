@@ -13,6 +13,7 @@ import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.MixBlend
+import com.music.bitchord.data.settings.MixTransitionView
 import com.music.bitchord.data.settings.TransitionWindow
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +41,30 @@ interface PlayerHost {
     /** The looping clip over the cover, decoded however this platform decodes video. */
     @Composable
     fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier)
+
+    /**
+     * Whether this platform shows a music video's picture over the playing
+     * audio. False keeps every video surface out of the player altogether.
+     */
+    val musicVideoSupported: Boolean get() = false
+
+    /**
+     * The playing music video's picture, fitted into these bounds ([fit]) or
+     * cropped to fill them. Draws nothing until a frame of [videoId] has
+     * landed, reported through [onRenderedChanged], so the caller keeps its
+     * still artwork under it until then.
+     */
+    @Composable
+    fun MusicVideo(videoId: String, fit: Boolean, onRenderedChanged: (Boolean) -> Unit, modifier: Modifier) = Unit
+
+    /** The playing music video's width over its height. */
+    val musicVideoAspect: StateFlow<Float> get() = DefaultVideoAspect
+
+    /** The heights the playing music video offers, and which one is held. */
+    val musicVideoQuality: StateFlow<MusicVideoQualityUi> get() = NoVideoQuality
+
+    /** Holds the picture at [height] from now on, or lets it choose with null. Remembered. */
+    fun setMusicVideoQuality(height: Int?) = Unit
 
     /**
      * Artwork for [song], resolving covers that live inside a remote file
@@ -92,6 +117,18 @@ interface PlayerHost {
     /** Casting to a network receiver. Absent, and so never drawn, where the platform has none. */
     val castState: StateFlow<CastUi> get() = NoCast
 
+    /**
+     * The BitChord watch app as an output: the watch plays the queue the way a
+     * Cast receiver does. Absent, and so never drawn, where there is no watch.
+     */
+    val watchOutput: StateFlow<WatchOutputUi> get() = NoWatch
+
+    /** The output drawer opening: look for a watch in reach again. */
+    fun refreshWatchOutput() = Unit
+
+    /** Make the watch the speaker. */
+    fun selectWatchOutput() = Unit
+
     /** The device picker the output drawer's Cast row opens, in the pipeline dialog's card. */
     @Composable
     fun CastDialog(hazeState: HazeState, onDismiss: () -> Unit) = Unit
@@ -111,6 +148,55 @@ interface PlayerHost {
 }
 
 private val NoCast = MutableStateFlow(CastUi())
+
+private val DefaultVideoAspect = MutableStateFlow(16f / 9f)
+
+private val NoVideoQuality = MutableStateFlow(MusicVideoQualityUi())
+
+/** What the video quality box draws — the web player's VideoQuality, by the same rules. */
+data class MusicVideoQualityUi(
+    /** Every height the loaded video offers, largest first. */
+    val heights: List<Int> = emptyList(),
+    /** The listener's pick, or null for Auto. */
+    val held: Int? = null,
+    /** The height actually on screen. */
+    val activeHeight: Int? = null,
+)
+
+/** How a height is named on screen: the marketing name where there is one, the height otherwise. */
+internal fun videoQualityLabel(height: Int): String = when {
+    height >= 4320 -> "8K"
+    height >= 2160 -> "4K"
+    height >= 1440 -> "2K"
+    height >= 1080 -> "FullHD"
+    height >= 720 -> "HD"
+    else -> "${height}p"
+}
+
+/** Whether [song]'s picture can be shown here — a music video, on a platform that plays one. */
+internal fun showsMusicVideo(song: Song): Boolean =
+    song.isVideo && PlayerPlatform.host.musicVideoSupported
+
+/** @see PlayerHost.MusicVideo */
+@Composable
+internal fun MusicVideoSurface(
+    videoId: String,
+    modifier: Modifier = Modifier,
+    fit: Boolean = true,
+    onRenderedChanged: (Boolean) -> Unit = {},
+) = PlayerPlatform.host.MusicVideo(videoId, fit, onRenderedChanged, modifier)
+
+private val NoWatch = MutableStateFlow(WatchOutputUi())
+
+/** What the output drawer needs to draw the watch's row. */
+data class WatchOutputUi(
+    /** A watch with BitChord on it is in reach. False (and not [active]) hides the row. */
+    val available: Boolean = false,
+    /** What the watch calls itself; the drawer has a generic name for when it says nothing. */
+    val name: String? = null,
+    /** The watch is the speaker. */
+    val active: Boolean = false,
+)
 
 /** What the output drawer needs to know about casting to draw its row. */
 data class CastUi(
@@ -142,7 +228,10 @@ interface PlayerSettingsSource {
     val canvasOverCellular: StateFlow<Boolean>
     val fullBleedArtwork: StateFlow<Boolean>
     val hideSongStatus: StateFlow<Boolean>
+    val showQueueHistory: StateFlow<Boolean>
     val hideVolumeBar: StateFlow<Boolean>
+    /** Hide the device status bar while the player is up. Always false where there is none. */
+    val hideStatusBar: StateFlow<Boolean>
     val lastPlayerScreen: StateFlow<LastPlayerScreen>
     val legacyMeshGradient: StateFlow<Boolean>
     val lyricsBlur: StateFlow<Boolean>
@@ -155,11 +244,21 @@ interface PlayerSettingsSource {
     val reduceDynamicBlur: StateFlow<Boolean>
     val showNerdStats: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
+    /**
+     * Automix's detailed stats line — both songs' analysis, then the planned
+     * mix (loop lengths and what cleared them, the tempo ramp) — or null when
+     * there is nothing to say beyond [smartAnalysis].
+     */
+    val automixDetail: StateFlow<String?>
     val smartFadeEnabled: StateFlow<Boolean>
     /** True only while an analysed Automix transition is audibly mixing two tracks. */
     val smartMixInProgress: StateFlow<Boolean>
     /** The Automix blend in flight, for the scrubber's beat glow; null between blends. */
     val smartMixBlend: StateFlow<MixBlend?>
+    /** The Automix blend in flight laid out for the mix popup; null between blends. */
+    val smartMixView: StateFlow<MixTransitionView?>
+    /** Progress through [smartMixView]'s blend, 0..1. */
+    val smartMixProgress: StateFlow<Float>
     val smartTransitionWindow: StateFlow<TransitionWindow?>
     val spotifyCanvasAutoHide: StateFlow<Boolean>
     val syncedLyrics: StateFlow<Boolean>
@@ -199,7 +298,16 @@ data class AudioOutputDevice(
     val name: String,
     val kind: AudioOutputKind,
     val isActive: Boolean = false,
+    /**
+     * What shape of thing a [AudioOutputKind.BLUETOOTH] device is. Buds and
+     * speakers connect as the same A2DP sink, so this is worked out from the
+     * device's name and class — and [BluetoothForm.UNKNOWN] wherever neither
+     * says, rather than a guess drawn as fact.
+     */
+    val form: BluetoothForm = BluetoothForm.UNKNOWN,
 )
+
+enum class BluetoothForm { UNKNOWN, BUDS, HEADPHONES, SPEAKER, CAR }
 
 data class OutputFormatUi(
     /** "24-bit PCM · 48 kHz" — whichever parts are known. */

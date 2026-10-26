@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.player
 
+import com.music.bitchord.wear.WearBridge
 import android.content.Context
 import android.database.ContentObserver
 import android.media.AudioFormat
@@ -55,7 +56,9 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val canvasOverCellular get() = AppSettings.canvasOverCellular
         override val fullBleedArtwork get() = AppSettings.fullBleedArtwork
         override val hideSongStatus get() = AppSettings.hideSongStatus
+        override val showQueueHistory get() = AppSettings.showQueueHistory
         override val hideVolumeBar get() = AppSettings.hideVolumeBar
+        override val hideStatusBar get() = AppSettings.hideStatusBarInPlayer
         override val lastPlayerScreen get() = AppSettings.lastPlayerScreen
         override val legacyMeshGradient get() = AppSettings.legacyMeshGradient
         override val lyricsBlur get() = AppSettings.lyricsBlur
@@ -68,9 +71,12 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val reduceDynamicBlur get() = AppSettings.reduceDynamicBlur
         override val showNerdStats get() = AppSettings.showNerdStats
         override val smartAnalysis get() = AppSettings.smartAnalysis
+        override val automixDetail get() = AppSettings.automixDetail
         override val smartFadeEnabled get() = AppSettings.smartFadeEnabled
         override val smartMixInProgress get() = AppSettings.smartMixInProgress
         override val smartMixBlend get() = AppSettings.smartMixBlend
+        override val smartMixView get() = AppSettings.smartMixView
+        override val smartMixProgress get() = AppSettings.smartMixProgress
         override val smartTransitionWindow get() = AppSettings.smartTransitionWindow
         override val spotifyCanvasAutoHide get() = AppSettings.spotifyCanvasAutoHide
         override val syncedLyrics get() = AppSettings.syncedLyrics
@@ -88,6 +94,18 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = AndroidCanvasVideo(spec, modifier)
 
+    override val musicVideoSupported: Boolean get() = true
+
+    @Composable
+    override fun MusicVideo(videoId: String, fit: Boolean, onRenderedChanged: (Boolean) -> Unit, modifier: Modifier) =
+        AndroidMusicVideo(videoId, fit, onRenderedChanged, modifier)
+
+    override val musicVideoAspect: StateFlow<Float> get() = MusicVideoEngine.aspect
+
+    override val musicVideoQuality: StateFlow<MusicVideoQualityUi> get() = MusicVideoEngine.quality
+
+    override fun setMusicVideoQuality(height: Int?) = MusicVideoEngine.setQuality(height)
+
     @Composable
     override fun rememberRemoteArtworkUrl(song: Song?): String? =
         com.music.bitchord.ui.components.rememberRemoteArtworkUrl(song)
@@ -100,9 +118,10 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     override fun rememberAudioOutputs(): List<AudioOutputDevice> {
         val outputs = rememberAndroidAudioOutputs()
         val cast by CastController.state.collectAsStateWithLifecycle()
+        val watch by WearBridge.watchOutput.collectAsStateWithLifecycle()
         // While a receiver is the speaker no output of this phone is the one
-        // playing, so none of them is lit; the Cast row is.
-        return if (cast.casting) outputs.map { it.copy(isActive = false) } else outputs
+        // playing, so none of them is lit; the Cast or watch row is.
+        return if (cast.casting || watch.active) outputs.map { it.copy(isActive = false) } else outputs
     }
 
     @Composable
@@ -113,6 +132,22 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         // is let go of, and the music carries on here if it was playing.
         if (CastController.state.value.casting) CastController.disconnect(resumeHere = true)
         AudioRouting.select(id)
+        WearBridge.leaveWatchOutput()
+    }
+
+    override val watchOutput: StateFlow<WatchOutputUi> by lazy {
+        WearBridge.watchOutput
+            .map { WatchOutputUi(available = it.available, name = it.name, active = it.active) }
+            .stateIn(scope, SharingStarted.Eagerly, WatchOutputUi())
+    }
+
+    override fun refreshWatchOutput() = WearBridge.refreshWatchOutput(app)
+
+    override fun selectWatchOutput() {
+        // One speaker at a time: a receiver lets go first, quietly, and the
+        // watch picks the queue up from where the phone's player is.
+        if (CastController.state.value.casting) CastController.disconnect(resumeHere = false)
+        WearBridge.selectWatchOutput()
     }
 
     override val outputFormat: StateFlow<OutputFormatUi> by lazy {
@@ -225,11 +260,22 @@ private class CastAwareVolume(
         system.level,
         CastController.volume,
         CastController.state.map { it.casting },
-    ) { phone, receiver, casting -> if (casting) receiver else phone }
+        WearBridge.watchOutput,
+    ) { phone, receiver, casting, watch ->
+        when {
+            casting -> receiver
+            watch.active -> watch.volume
+            else -> phone
+        }
+    }
         .stateIn(scope, SharingStarted.Eagerly, system.level.value)
 
     override fun set(level: Float) {
-        if (CastController.state.value.casting) CastController.setVolume(level) else system.set(level)
+        when {
+            CastController.state.value.casting -> CastController.setVolume(level)
+            WearBridge.watchOutput.value.active -> WearBridge.setWatchVolume(level)
+            else -> system.set(level)
+        }
     }
 
     override fun refresh() = system.refresh()

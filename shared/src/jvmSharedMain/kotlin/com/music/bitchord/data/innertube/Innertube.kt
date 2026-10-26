@@ -65,27 +65,21 @@ object Innertube {
     @Volatile
     var appLanguage: () -> String? = { null }
 
-    val currentLanguage: String
+    val currentLocaleTag: String
         get() {
             val raw = appLanguage()?.ifEmpty { null }
-                ?: Locale.getDefault().language.ifEmpty { "en" }
-            return when (raw.lowercase(Locale.ROOT)) {
-                "iw" -> "he"
-                "in" -> "id"
-                "ji" -> "yi"
-                else -> raw
-            }
+                ?: Locale.getDefault().toLanguageTag().ifEmpty { "en" }
+            return com.music.bitchord.data.LocaleTags.normalizeAppTag(raw)
         }
 
+    val currentLanguage: String
+        get() = com.music.bitchord.data.LocaleTags.ytHl(currentLocaleTag)
+
+    val currentRegion: String
+        get() = com.music.bitchord.data.LocaleTags.ytGl(currentLocaleTag)
+
     private val acceptLanguageHeader: String
-        get() {
-            val lang = currentLanguage
-            return if (lang == "en") {
-                "en-US,en;q=0.9"
-            } else {
-                "$lang,en-US;q=0.8,en;q=0.7"
-            }
-        }
+        get() = com.music.bitchord.data.LocaleTags.acceptLanguage(currentLocaleTag)
 
     private const val MUSIC_BASE = "https://music.youtube.com/youtubei/v1"
     private const val MUSIC_ORIGIN = "https://music.youtube.com"
@@ -612,6 +606,19 @@ object Innertube {
         put("isAudioOnly", true)
     }
 
+    /**
+     * A watch queue started from a playlist rather than a track: a mix such as
+     * My Supermix, a playlist radio (`RDAMPL…`), or an artist's Mix / Shuffle
+     * button, which also carry their own seed [videoId] and [params].
+     */
+    suspend fun nextPlaylist(playlistId: String, videoId: String? = null, params: String? = null): JsonObject =
+        postMusic("next") {
+            videoId?.let { put("videoId", it) }
+            put("playlistId", playlistId)
+            params?.let { put("params", it) }
+            put("isAudioOnly", true)
+        }
+
     /** Timed caption transcript used as a last-resort lyrics source. */
     suspend fun transcript(videoId: String): JsonObject = postMusic("get_transcript") {
         // get_transcript expects a tiny protobuf: field 1, length, video id.
@@ -619,10 +626,17 @@ object Innertube {
         put("params", Base64.getEncoder().encodeToString(bytes))
     }
 
-    suspend fun search(query: String, params: String? = null): JsonObject =
-        postMusic("search") {
-            put("query", query)
-            params?.let { put("params", it) }
+    suspend fun search(query: String, params: String? = null, anonymous: Boolean = true): JsonObject =
+        if (anonymous) {
+            postMusicAnonymous("search") {
+                put("query", query)
+                params?.let { put("params", it) }
+            }
+        } else {
+            postMusic("search") {
+                put("query", query)
+                params?.let { put("params", it) }
+            }
         }
 
     /**
@@ -831,8 +845,8 @@ object Innertube {
             parameter("cbrver", "141.0.0.0")
             parameter("cos", "Windows")
             parameter("cosver", "10.0")
-            parameter("hl", "en_US")
-            parameter("cr", "US")
+            parameter("hl", currentLanguage.replace('-', '_'))
+            parameter("cr", currentRegion)
             extras()
             statsHeaders(session)
         }.status.value
@@ -1204,7 +1218,7 @@ object Innertube {
                                 put("clientName", "WEB_REMIX")
                                 put("clientVersion", clientVersion)
                                 put("hl", currentLanguage)
-                                put("gl", "US")
+                                put("gl", currentRegion)
                                 visitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
@@ -1230,6 +1244,7 @@ object Innertube {
         }
         return response
     }
+
 
     /** First string value under [key] anywhere in [element], depth-first. */
     private fun findString(element: JsonElement, key: String): String? = when (element) {

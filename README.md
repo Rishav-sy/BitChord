@@ -12,8 +12,9 @@
 <br/>
 
 [![Latest release](https://img.shields.io/github/v/release/Rishav-sy/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/Rishav-sy/BitChord/releases)
-[![License](https://img.shields.io/github/license/Rishav-sy/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/Rishav-sy/BitChord/blob/v1.5.2/LICENSE)
+[![License](https://img.shields.io/github/license/kushagrasinghx/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/blob/main/LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/Rishav-sy/BitChord/total?style=for-the-badge&labelColor=0d1117)](https://github.com/Rishav-sy/BitChord/releases)
+[![Listening now](https://api.bitchord.kushagrasingh.in/api/stats/live/badge.svg)](https://api.bitchord.kushagrasingh.in/api/stats/live)
 
 <br/>
 
@@ -96,9 +97,10 @@
 
 <h1><a id="download"></a>Download</h1>
 
+<a href="https://github.com/Rishav-sy/BitChord/releases" target="_blank" rel="noopener noreferrer"><img src="https://cdn.jsdelivr.net/gh/JMcrafter26/badges@main/src/assets/supported/android/cozy.svg" alt="Download for Android" height="55"/></a>
+
 Grab the latest signed APK from the [Releases](https://github.com/Rishav-sy/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
 
-For the Windows and Linux desktop app, see [DESKTOP.md](DESKTOP.md).
 
 </div>
 
@@ -115,7 +117,7 @@ We welcome contributions to BitChord! Please review our [Contributing Guide](CON
 ### Thanks to all contributors ❤
 
 <a href="https://github.com/kushagrasinghx/BitChord/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=kushagrasinghx/BitChord" />
+  <img src="https://raw.githubusercontent.com/kushagrasinghx/BitChord/contributors/contributors.svg" />
 </a>
 
 </div>
