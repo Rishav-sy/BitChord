@@ -18,6 +18,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Request
 import java.io.File
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.UpdateChannel
@@ -47,6 +49,56 @@ object AppUpdateChecker {
         val repo: String = OFFICIAL_REPO,
     )
 
+    data class RepoReleaseMeta(
+        val repo: String,
+        val isUpstream: Boolean,
+        val tagName: String,
+        val name: String?,
+        val publishedAtIso: String?,
+        val daysAgo: Long?,
+        val releaseUrl: String,
+        val apkUrl: String? = null,
+        val notes: String? = null,
+        val isDraft: Boolean = false,
+        val isPrerelease: Boolean = false,
+    )
+
+    data class ReleaseComparison(
+        val upstream: RepoReleaseMeta?,
+        val fork: RepoReleaseMeta?,
+        val upstreamError: String? = null,
+        val forkError: String? = null,
+        val isChecking: Boolean = false,
+    ) {
+        fun summary(): String {
+            val uDays = upstream?.daysAgo
+            val fDays = fork?.daysAgo
+            return when {
+                uDays != null && fDays != null -> {
+                    when {
+                        uDays < fDays -> "Upstream is ${fDays - uDays}d newer (${formatDays(uDays)} vs ${formatDays(fDays)})"
+                        fDays < uDays -> "Fork is ${uDays - fDays}d newer (${formatDays(fDays)} vs ${formatDays(uDays)})"
+                        else -> "Both released on the same day (${formatDays(uDays)})"
+                    }
+                }
+                uDays != null -> "Upstream released ${formatDays(uDays)}"
+                fDays != null -> "Fork released ${formatDays(fDays)}"
+                upstreamError != null && forkError != null -> "Failed to load releases"
+                upstreamError != null -> "Upstream: $upstreamError"
+                forkError != null -> "Fork: $forkError"
+                else -> "Tap to compare upstream & fork releases"
+            }
+        }
+
+        companion object {
+            fun formatDays(days: Long): String = when (days) {
+                0L -> "today"
+                1L -> "1 day ago"
+                else -> "$days days ago"
+            }
+        }
+    }
+
     sealed interface CheckStatus {
         data object Idle : CheckStatus
         data object Checking : CheckStatus
@@ -64,6 +116,9 @@ object AppUpdateChecker {
 
     private val _checkStatus = MutableStateFlow<CheckStatus>(CheckStatus.Idle)
     val checkStatus = _checkStatus.asStateFlow()
+
+    private val _comparison = MutableStateFlow<ReleaseComparison?>(null)
+    val comparison = _comparison.asStateFlow()
 
     /** Where this update's APK download currently stands, for the dialog's progress row. */
     sealed interface DownloadState {
@@ -85,12 +140,14 @@ object AppUpdateChecker {
         if (update != null) {
             _available.value = update
         }
+        refreshComparison()
     }
 
     suspend fun checkManual(): CheckStatus = withContext(Dispatchers.IO) {
         _checkStatus.value = CheckStatus.Checking
         try {
             val update = resolveUpdate()
+            refreshComparison()
             if (update != null) {
                 _available.value = update
                 val status = CheckStatus.Available(update)
@@ -109,56 +166,151 @@ object AppUpdateChecker {
         }
     }
 
+    private fun calculateDaysAgo(isoDate: String?): Long? {
+        if (isoDate.isNullOrBlank()) return null
+        return runCatching {
+            val instant = Instant.parse(isoDate)
+            val now = Instant.now()
+            ChronoUnit.DAYS.between(instant, now).coerceAtLeast(0)
+        }.getOrNull()
+    }
+
+    suspend fun fetchRepoRelease(repo: String, isUpstream: Boolean): RepoReleaseMeta? = withContext(Dispatchers.IO) {
+        val token = if (!isUpstream) AppSettings.githubUpdateToken.value.trim() else ""
+        val endpoints = listOf(
+            "https://api.github.com/repos/$repo/releases/latest",
+            "https://api.github.com/repos/$repo/releases?per_page=1"
+        )
+        for (url in endpoints) {
+            val requestBuilder = Request.Builder()
+                .url(url)
+                .header("User-Agent", "BitChord-Android")
+            if (token.isNotBlank()) {
+                requestBuilder.header("Authorization", "Bearer $token")
+            }
+            val responseBody = runCatching {
+                Http.client.newCall(requestBuilder.build()).execute().use { response ->
+                    if (!response.isSuccessful) null else response.body.string()
+                }
+            }.getOrNull() ?: continue
+
+            val releaseObj = runCatching {
+                val element = json.parseToJsonElement(responseBody)
+                if (element is JsonObject) element
+                else (element as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? JsonObject
+            }.getOrNull() ?: continue
+
+            val tag = releaseObj["tag_name"]?.jsonPrimitive?.contentOrNull ?: continue
+            val name = releaseObj["name"]?.jsonPrimitive?.contentOrNull
+            val htmlUrl = releaseObj["html_url"]?.jsonPrimitive?.contentOrNull ?: "https://github.com/$repo/releases"
+            val publishedAt = releaseObj["published_at"]?.jsonPrimitive?.contentOrNull
+                ?: releaseObj["created_at"]?.jsonPrimitive?.contentOrNull
+            val apkUrl = apkAssetUrl(releaseObj, isPrivateWithToken = token.isNotBlank())
+            val notes = releaseObj["body"]?.jsonPrimitive?.contentOrNull
+            val isDraft = releaseObj["draft"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            val isPrerelease = releaseObj["prerelease"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+
+            return@withContext RepoReleaseMeta(
+                repo = repo,
+                isUpstream = isUpstream,
+                tagName = tag,
+                name = name,
+                publishedAtIso = publishedAt,
+                daysAgo = calculateDaysAgo(publishedAt),
+                releaseUrl = htmlUrl,
+                apkUrl = apkUrl,
+                notes = notes,
+                isDraft = isDraft,
+                isPrerelease = isPrerelease,
+            )
+        }
+        null
+    }
+
+    suspend fun refreshComparison(): ReleaseComparison = withContext(Dispatchers.IO) {
+        _comparison.value = _comparison.value?.copy(isChecking = true) ?: ReleaseComparison(null, null, isChecking = true)
+        val customRepo = AppSettings.customUpdateRepo.value.ifBlank { "Rishav-sy/BitChord" }
+
+        var uMeta: RepoReleaseMeta? = null
+        var uErr: String? = null
+        try {
+            uMeta = fetchRepoRelease(OFFICIAL_REPO, isUpstream = true)
+            if (uMeta == null) uErr = "No release found"
+        } catch (e: Exception) {
+            uErr = e.message ?: "Failed to fetch upstream"
+        }
+
+        var fMeta: RepoReleaseMeta? = null
+        var fErr: String? = null
+        try {
+            fMeta = fetchRepoRelease(customRepo, isUpstream = false)
+            if (fMeta == null) {
+                fErr = if (AppSettings.githubUpdateToken.value.isBlank()) {
+                    "Repo not found or private (add GitHub Token)"
+                } else {
+                    "No release found"
+                }
+            }
+        } catch (e: Exception) {
+            fErr = e.message ?: "Failed to fetch fork"
+        }
+
+        val comp = ReleaseComparison(
+            upstream = uMeta,
+            fork = fMeta,
+            upstreamError = uErr,
+            forkError = fErr,
+            isChecking = false,
+        )
+        _comparison.value = comp
+        comp
+    }
+
     private suspend fun resolveUpdate(): UpdateInfo? {
         val channel = AppSettings.updateChannel.value
         val customRepo = AppSettings.customUpdateRepo.value.ifBlank { "Rishav-sy/BitChord" }
 
+        val upstreamMeta = if (channel == UpdateChannel.OFFICIAL || channel == UpdateChannel.BOTH) {
+            fetchRepoRelease(OFFICIAL_REPO, isUpstream = true)
+        } else null
+
+        val forkMeta = if (channel == UpdateChannel.FORK || channel == UpdateChannel.BOTH) {
+            fetchRepoRelease(customRepo, isUpstream = false)
+        } else null
+
+        val official = upstreamMeta?.takeIf { isNewer(it.tagName.removePrefix("v"), BuildConfig.VERSION_NAME) }?.let {
+            UpdateInfo(
+                version = it.tagName.removePrefix("v"),
+                releaseUrl = it.releaseUrl,
+                apkUrl = it.apkUrl,
+                notes = it.notes,
+                channel = "Official",
+                repo = OFFICIAL_REPO,
+            )
+        }
+
+        val fork = forkMeta?.takeIf { isNewer(it.tagName.removePrefix("v"), BuildConfig.VERSION_NAME) }?.let {
+            UpdateInfo(
+                version = it.tagName.removePrefix("v"),
+                releaseUrl = it.releaseUrl,
+                apkUrl = it.apkUrl,
+                notes = it.notes,
+                channel = "My Fork",
+                repo = customRepo,
+            )
+        }
+
         return when (channel) {
-            UpdateChannel.OFFICIAL -> fetchRelease(OFFICIAL_REPO, "Official")
-            UpdateChannel.FORK -> fetchRelease(customRepo, "My Fork")
-            UpdateChannel.BOTH -> {
-                val official = fetchRelease(OFFICIAL_REPO, "Official")
-                val fork = fetchRelease(customRepo, "My Fork")
-                when {
-                    official == null -> fork
-                    fork == null -> official
-                    isNewer(fork.version, official.version) -> fork
-                    else -> official
-                }
+            UpdateChannel.OFFICIAL -> official
+            UpdateChannel.FORK -> fork
+            UpdateChannel.BOTH -> when {
+                official == null -> fork
+                fork == null -> official
+                isNewer(fork.version, official.version) -> fork
+                else -> official
             }
         }
     }
-
-    private suspend fun fetchRelease(repo: String, channelName: String): UpdateInfo? = runCatching {
-        val token = if (repo != OFFICIAL_REPO) AppSettings.githubUpdateToken.value.trim() else ""
-        val url = "https://api.github.com/repos/$repo/releases/latest"
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .header("User-Agent", "BitChord-Android")
-        if (token.isNotBlank()) {
-            requestBuilder.header("Authorization", "Bearer $token")
-        }
-        val responseBody = Http.client.newCall(requestBuilder.build()).execute().use { response ->
-            if (!response.isSuccessful) null else response.body?.string()
-        } ?: return null
-
-        val release = json.parseToJsonElement(responseBody) as? JsonObject ?: return null
-        val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return null
-        val htmlUrl = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return null
-        val apkUrl = apkAssetUrl(release, isPrivateWithToken = token.isNotBlank())
-        val notes = release["body"]?.jsonPrimitive?.contentOrNull
-        val latest = tag.removePrefix("v")
-        if (isNewer(latest, BuildConfig.VERSION_NAME)) {
-            UpdateInfo(
-                version = latest,
-                releaseUrl = htmlUrl,
-                apkUrl = apkUrl,
-                notes = notes,
-                channel = channelName,
-                repo = repo,
-            )
-        } else null
-    }.getOrNull()
 
     /**
      * Wipes any APK left over from a previous run. Called once at cold start

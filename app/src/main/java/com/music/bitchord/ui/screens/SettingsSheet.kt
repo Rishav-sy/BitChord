@@ -33,7 +33,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.ScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.CompareArrows
 import androidx.compose.material.icons.automirrored.rounded.Notes
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Animation
@@ -292,6 +294,7 @@ fun SettingsScreen(
     val customUpdateRepo by AppSettings.customUpdateRepo.collectAsStateWithLifecycle()
     val githubUpdateToken by AppSettings.githubUpdateToken.collectAsStateWithLifecycle()
     val checkStatus by AppUpdateChecker.checkStatus.collectAsStateWithLifecycle()
+    val comparison by AppUpdateChecker.comparison.collectAsStateWithLifecycle()
     var pickingUpdateChannel by remember { mutableStateOf(false) }
     var showCustomRepoDialog by remember { mutableStateOf(false) }
     var showGithubTokenDialog by remember { mutableStateOf(false) }
@@ -1667,6 +1670,90 @@ fun SettingsScreen(
                     }
                 },
             )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.AutoMirrored.Rounded.CompareArrows,
+                title = "Release Comparison",
+                subtitle = comparison?.summary() ?: "Tap to compare upstream & fork releases",
+                trailing = {
+                    if (comparison?.isChecking == true) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
+                        Text(
+                            text = if (comparison != null) "Refresh" else "Compare",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                },
+                onClick = {
+                    updateScope.launch {
+                        AppUpdateChecker.refreshComparison()
+                    }
+                },
+            )
+            comparison?.upstream?.let { u ->
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Cloud,
+                    title = "Upstream (kushagrasinghx)",
+                    subtitle = "${u.tagName} • ${AppUpdateChecker.ReleaseComparison.formatDays(u.daysAgo ?: 0)}${u.publishedAtIso?.take(10)?.let { " ($it)" } ?: ""}",
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                            contentDescription = "Open in browser",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u.releaseUrl)))
+                        }
+                    },
+                )
+            }
+            comparison?.fork?.let { f ->
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.AccountTree,
+                    title = "My Fork (${customUpdateRepo.substringAfterLast('/')})",
+                    subtitle = "${f.tagName} • ${AppUpdateChecker.ReleaseComparison.formatDays(f.daysAgo ?: 0)}${f.publishedAtIso?.take(10)?.let { " ($it)" } ?: ""}",
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                            contentDescription = "Open in browser",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(f.releaseUrl)))
+                        }
+                    },
+                )
+            }
+            if (comparison != null && comparison?.fork == null && comparison?.forkError != null) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Key,
+                    title = "Fork Release Status",
+                    subtitle = comparison?.forkError ?: "Unable to fetch fork releases",
+                    trailing = {
+                        Text(
+                            text = "Token",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    },
+                    onClick = { showGithubTokenDialog = true },
+                )
+            }
         }
 
         // The version line is the page's colophon, not a setting: it belongs to
