@@ -356,7 +356,7 @@ private const val ARTWORK_DRAG_SHRINK_SCALE = 0.94f
  * bounce is the signature.
  */
 private val ArtworkScaleEasing = CubicBezierEasing(0.215f, 0.61f, 0.355f, 1f)
-private val ArtworkMorphEasing = CubicBezierEasing(0.2f, 0.0f, 0.2f, 1.0f)
+private val ArtworkMorphEasing = CubicBezierEasing(0.28f, 0.0f, 0.18f, 1.0f)
 private const val ARTWORK_SCALE_DURATION_MS = 500
 
 private data class SleeveVisualSnapshot(
@@ -1459,11 +1459,11 @@ fun NowPlayingScreen(
             val incomingReady = art.loaded || canvasRendered || art.failed
             if (incomingReady) {
                 val durationMs = if (crossfadeSeconds > 0) {
-                    (crossfadeSeconds * 1000).coerceIn(600, 1600)
-                } else if (smartFadeOn) {
-                    1100
+                    (crossfadeSeconds * 1000).coerceIn(800, 1800)
+                } else if (smartFadeOn || mixing) {
+                    1200
                 } else {
-                    750
+                    850
                 }
                 sleeveMorphProgress.animateTo(
                     targetValue = 1f,
@@ -1483,11 +1483,11 @@ fun NowPlayingScreen(
             delay(400)
             if (outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f && !mixing) {
                 val durationMs = if (crossfadeSeconds > 0) {
-                    (crossfadeSeconds * 1000).coerceIn(600, 1600)
-                } else if (smartFadeOn) {
-                    1100
+                    (crossfadeSeconds * 1000).coerceIn(800, 1800)
+                } else if (smartFadeOn || mixing) {
+                    1200
                 } else {
-                    750
+                    850
                 }
                 sleeveMorphProgress.animateTo(
                     targetValue = 1f,
@@ -1515,13 +1515,15 @@ fun NowPlayingScreen(
         else -> kotlin.math.sin(morphProgress * (kotlin.math.PI.toFloat() / 2f)).coerceIn(0f, 1f)
     }
     val (outScale, inScale) = when (canvasTransitionStyle) {
-        CanvasTransitionStyle.MORPH -> (1.0f + 0.08f * morphProgress) to (if (isMorphing) 0.92f + 0.08f * morphProgress else 1f)
+        CanvasTransitionStyle.MORPH -> (1.0f + 0.06f * morphProgress) to (if (isMorphing) 0.94f + 0.06f * morphProgress else 1f)
+        CanvasTransitionStyle.DITHER -> (1.0f + 0.05f * morphProgress) to (if (isMorphing) 0.95f + 0.05f * morphProgress else 1f)
         CanvasTransitionStyle.ZOOM -> (1.0f + 0.16f * morphProgress) to (if (isMorphing) 0.84f + 0.16f * morphProgress else 1f)
         else -> 1.0f to 1.0f
     }
     val canMorphBlur = !reduceDynamicBlur && renderEffectBlurSupported
-    val morphBlur = if (isMorphing && canMorphBlur && canvasTransitionStyle == CanvasTransitionStyle.MORPH) {
-        (kotlin.math.sin(morphProgress * kotlin.math.PI.toFloat()) * 8f).dp
+    val morphBlur = if (isMorphing && canMorphBlur && (canvasTransitionStyle == CanvasTransitionStyle.MORPH || canvasTransitionStyle == CanvasTransitionStyle.DITHER)) {
+        val maxBlur = if (canvasTransitionStyle == CanvasTransitionStyle.MORPH) 8f else 4f
+        (kotlin.math.sin(morphProgress * kotlin.math.PI.toFloat()) * maxBlur).dp
     } else {
         0.dp
     }
@@ -2488,10 +2490,14 @@ fun NowPlayingScreen(
                             )
                             .then(
                                 if (isDither) {
-                                    Modifier.ditherDissolve { (morphProgress * 64).toInt() }
+                                    Modifier
                                         .graphicsLayer {
                                             alpha = (1f - 2f * p()).coerceIn(0f, 1f) * dockFade()
+                                            scaleX = outScale
+                                            scaleY = outScale
                                         }
+                                        .ditherDissolve { morphProgress }
+                                        .then(if (morphBlur > 0.dp) Modifier.blur(morphBlur) else Modifier)
                                 } else {
                                     Modifier
                                         .graphicsLayer {
@@ -3405,7 +3411,7 @@ fun NowPlayingScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        if (isMorphing && !isDither) {
+                                        if (isMorphing) {
                                             scaleX = inScale
                                             scaleY = inScale
                                         }
@@ -3452,7 +3458,13 @@ fun NowPlayingScreen(
                                     .fillMaxSize()
                                     .then(
                                         if (isDither) {
-                                            Modifier.ditherDissolve { (morphProgress * 64).toInt() }
+                                            Modifier
+                                                .graphicsLayer {
+                                                    scaleX = outScale
+                                                    scaleY = outScale
+                                                }
+                                                .ditherDissolve { morphProgress }
+                                                .then(if (morphBlur > 0.dp) Modifier.blur(morphBlur) else Modifier)
                                         } else {
                                             Modifier
                                                 .graphicsLayer {
