@@ -6,6 +6,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonTrack
 import com.music.bitchord.data.sources.pool.PoolAccountManager
+import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -263,14 +264,20 @@ class TidalSource(
                         val codecs = manJson.optString("codecs", "flac")
                         val mimeType = manJson.optString("mimeType", manifestMime.orEmpty())
                         val isFlac = codecs.contains("flac", true) || mimeType.contains("flac", true)
+
+                        if (!isFlac) {
+                            TrackLog.d(TAG, "  Tidal account returned $codecs instead of FLAC, checking next option")
+                            return@use null
+                        }
+
                         val sampleRateHz = if (endpoint.contains("HI_RES")) 96000 else 44100
                         val bitDepth = if (endpoint.contains("HI_RES")) 24 else 16
 
                         return SourceStream(
                             url = streamUrl,
                             format = StreamFormat(
-                                codec = if (isFlac) "flac" else codecs,
-                                kbps = if (isFlac) (if (bitDepth > 16) 2304 else 1411) else 320,
+                                codec = "flac",
+                                kbps = if (bitDepth > 16) 2304 else 1411,
                                 sampleRateHz = sampleRateHz,
                                 bitDepth = bitDepth,
                             ),
@@ -280,27 +287,28 @@ class TidalSource(
 
                     // 2. DASH MPD Manifest
                     if (manifestDecoded.contains("<MPD", ignoreCase = true)) {
-                        val initUrlMatch = Regex("<Initialization\\b[^>]*sourceURL=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
-                            .find(manifestDecoded)?.groupValues?.getOrNull(1)
-                        val segmentUrlMatch = Regex("<SegmentURL\\b[^>]*media=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
-                            .find(manifestDecoded)?.groupValues?.getOrNull(1)
+                        val dataUri = "data:application/dash+xml;base64,$manifestB64"
+                        StreamContainer.declare(dataUri, "dash")
 
-                        val streamUrl = segmentUrlMatch ?: initUrlMatch
-                        if (!streamUrl.isNullOrBlank()) {
-                            val isHiRes = endpoint.contains("HI_RES")
-                            val bitDepth = if (isHiRes) 24 else 16
-                            val sampleRateHz = if (isHiRes) 96000 else 44100
-                            return SourceStream(
-                                url = streamUrl,
-                                format = StreamFormat(
-                                    codec = "flac",
-                                    kbps = if (bitDepth > 16) 2304 else 1411,
-                                    sampleRateHz = sampleRateHz,
-                                    bitDepth = bitDepth,
-                                ),
-                                headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
-                            )
-                        }
+                        val isHiRes = endpoint.contains("HI_RES") ||
+                            manifestDecoded.contains("FLAC_HIRES", ignoreCase = true) ||
+                            manifestDecoded.contains(",24", ignoreCase = true)
+                        val bitDepth = if (isHiRes) 24 else 16
+                        val sampleRateHz = Regex("""audioSamplingRate="(\d+)"""").find(manifestDecoded)
+                            ?.groupValues?.getOrNull(1)?.toIntOrNull()
+                            ?: (if (isHiRes) 96000 else 44100)
+
+                        TrackLog.d(TAG, "  ✓ Tidal DASH MPD stream resolved (sampleRate=$sampleRateHz, bitDepth=$bitDepth)")
+                        return SourceStream(
+                            url = dataUri,
+                            format = StreamFormat(
+                                codec = "flac",
+                                kbps = if (bitDepth > 16) 2304 else 1411,
+                                sampleRateHz = sampleRateHz,
+                                bitDepth = bitDepth,
+                            ),
+                            headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
+                        )
                     }
                 }
             } catch (e: Exception) {

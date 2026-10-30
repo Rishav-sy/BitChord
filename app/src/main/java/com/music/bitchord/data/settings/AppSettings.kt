@@ -168,6 +168,7 @@ object AppSettings {
      */
     val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
     val audioQualityCellular = MutableStateFlow(AudioQuality.LOSSLESS)
+    val ignoreLosslessOutputCheck = MutableStateFlow(true)
 
     /** Allowed duration difference when replacing a playing stream with one from a source. */
     val upgradeLengthSlackSeconds = MutableStateFlow(DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS)
@@ -854,6 +855,7 @@ object AppSettings {
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
         audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
+        ignoreLosslessOutputCheck.value = prefs.getBoolean(KEY_IGNORE_LOSSLESS_OUTPUT_CHECK, true)
         upgradeLengthSlackSeconds.value = prefs.getInt(
             KEY_UPGRADE_LENGTH_SLACK_SECONDS,
             DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS,
@@ -1140,6 +1142,12 @@ object AppSettings {
     fun setAudioQualityCellular(value: AudioQuality) {
         audioQualityCellular.value = value
         prefs.edit().putString(KEY_QUALITY_CELLULAR, value.name).apply()
+    }
+
+    fun setIgnoreLosslessOutputCheck(value: Boolean) {
+        ignoreLosslessOutputCheck.value = value
+        prefs.edit().putBoolean(KEY_IGNORE_LOSSLESS_OUTPUT_CHECK, value).apply()
+        com.music.bitchord.playback.audio.LosslessOutput.refresh()
     }
 
     fun setUpgradeLengthSlackSeconds(value: Int) {
@@ -2124,6 +2132,7 @@ object AppSettings {
     private const val KEY_ENABLE_SPOTIFY_CANVAS = "enable_spotify_canvas"
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_CANVAS_TRANSITION_STYLE = "canvas_transition_style"
+    private const val KEY_IGNORE_LOSSLESS_OUTPUT_CHECK = "ignore_lossless_output_check"
     private const val KEY_SIGNATURE_API_ENABLED = "signature_api_enabled"
     private const val KEY_SIGNATURE_API_URL = "signature_api_url"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"

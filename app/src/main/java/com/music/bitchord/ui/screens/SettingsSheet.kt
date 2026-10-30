@@ -555,6 +555,26 @@ fun SettingsScreen(
                     onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
                 )
             }
+            val ignoreOutputCheckTitle = stringResource(R.string.ignore_lossless_output_check_title)
+            row(ignoreOutputCheckTitle, "lossless", "output", "bluetooth", "hardware") {
+                val ignoreLosslessOutputCheck by AppSettings.ignoreLosslessOutputCheck.collectAsStateWithLifecycle()
+                SettingsRow(
+                    icon = Icons.Rounded.Waves,
+                    title = ignoreOutputCheckTitle,
+                    subtitle = stringResource(R.string.ignore_lossless_output_check_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = ignoreLosslessOutputCheck,
+                            onCheckedChange = AppSettings::setIgnoreLosslessOutputCheck,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setIgnoreLosslessOutputCheck(!ignoreLosslessOutputCheck) },
+                )
+            }
         }
 
         // Its own group rather than rows bolted onto the two above, because a

@@ -2,44 +2,63 @@ package com.music.bitchord.ui.graphics
 
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Canvas
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageShader
-import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
- * High-precision, continuous-smoothed 8x8 Bayer dither matrix for silky
- * retro-modern pixel-dissolve transitions.
+ * Damascus Wave procedural transition mask.
  *
- * Implements smooth cubic Hermite threshold transitions across 128 quantized
- * micro-steps with 24x24px (3px cell) hardware-accelerated tiled bitmap shaders.
- * Eliminates 1-bit hard stepping, dot popping, and jitter, creating an organic
- * liquid-silk dither dissolve.
+ * Implements a continuous-smoothed, periodic domain-warped topological
+ * potential field. Eliminates discrete pixel grid dots and OLED Moiré
+ * strobing, producing an organic, silky Damascus steel wave ribbon dissolution.
+ *
+ * Uses 128 quantized micro-steps rendered through hardware-accelerated tiled
+ * ARGB bitmap shaders with smooth cubic Hermite edge antialiasing.
  */
 object DitherMatrix {
-    private val BAYER_8X8 = intArrayOf(
-         0, 32,  8, 40,  2, 34, 10, 42,
-        48, 16, 56, 24, 50, 18, 58, 26,
-        12, 44,  4, 36, 14, 46,  6, 38,
-        60, 28, 52, 20, 62, 30, 54, 22,
-         3, 35, 11, 43,  1, 33,  9, 41,
-        51, 19, 59, 27, 49, 17, 57, 25,
-        15, 47,  7, 39, 13, 45,  5, 37,
-        63, 31, 55, 23, 61, 29, 53, 21,
-    )
-
     private const val STEPS = 128
-    private const val SOFTNESS = 0.16f
-    private const val CELL_SIZE = 3
-    private const val TILE_SIZE = 8 * CELL_SIZE // 24x24 px
+    private const val SOFTNESS = 0.18f
+    private const val TILE_SIZE = 96
+
+    // Precomputed normalized periodic Damascus potential field (0f..1f)
+    private val DAMASCUS_FIELD: FloatArray by lazy {
+        val field = FloatArray(TILE_SIZE * TILE_SIZE)
+        val twoPi = (2.0 * Math.PI).toFloat()
+        var minVal = Float.MAX_VALUE
+        var maxVal = Float.MIN_VALUE
+        val raw = FloatArray(TILE_SIZE * TILE_SIZE)
+
+        for (y in 0 until TILE_SIZE) {
+            val py = twoPi * y / TILE_SIZE
+            for (x in 0 until TILE_SIZE) {
+                val px = twoPi * x / TILE_SIZE
+                val qx = px + 0.8f * sin(2f * py + 0.4f)
+                val qy = py + 0.8f * cos(2f * px + 0.2f)
+                val rx = qx + 0.6f * sin(3f * qy + px)
+                val ry = qy + 0.6f * cos(3f * qx + py)
+                val s = 0.5f * sin(2f * rx + 3f * ry) +
+                        0.3f * cos(4f * rx - 2f * ry) +
+                        0.2f * sin(5f * ry + rx)
+                val idx = y * TILE_SIZE + x
+                raw[idx] = s
+                if (s < minVal) minVal = s
+                if (s > maxVal) maxVal = s
+            }
+        }
+
+        val range = (maxVal - minVal).coerceAtLeast(1e-5f)
+        for (i in raw.indices) {
+            field[i] = (raw[i] - minVal) / range
+        }
+        field
+    }
 
     private val brushes = Array<ShaderBrush?>(STEPS) { null }
 
@@ -48,46 +67,27 @@ object DitherMatrix {
         if (clamped <= 0 || clamped >= STEPS - 1) return null
         brushes[clamped]?.let { return it }
 
-        // Progress normalized to 0..1
         val progress = clamped.toFloat() / (STEPS - 1)
-        // Soft sweep mapping ensuring 100% opacity at progress=0 and 100% transparent at progress=1
         val sweep = progress * (1f + SOFTNESS) - (SOFTNESS / 2f)
 
-        val bitmap = ImageBitmap(TILE_SIZE, TILE_SIZE)
-        val canvas = Canvas(bitmap)
-        val paint = Paint().apply {
-            isAntiAlias = false
-        }
+        val pixels = IntArray(TILE_SIZE * TILE_SIZE)
+        val field = DAMASCUS_FIELD
 
-        for (y in 0 until 8) {
-            for (x in 0 until 8) {
-                val normalizedThreshold = (BAYER_8X8[y * 8 + x] + 0.5f) / 64f
-                val diff = normalizedThreshold - sweep
-
-                val cellAlpha = when {
-                    diff >= SOFTNESS / 2f -> 1f
-                    diff <= -SOFTNESS / 2f -> 0f
-                    else -> {
-                        val t = (diff / SOFTNESS + 0.5f).coerceIn(0f, 1f)
-                        t * t * (3f - 2f * t) // Smooth cubic Hermite interpolation
-                    }
-                }
-
-                if (cellAlpha > 0.005f) {
-                    paint.color = Color.White.copy(alpha = cellAlpha)
-                    canvas.drawRect(
-                        Rect(
-                            left = (x * CELL_SIZE).toFloat(),
-                            top = (y * CELL_SIZE).toFloat(),
-                            right = ((x + 1) * CELL_SIZE).toFloat(),
-                            bottom = ((y + 1) * CELL_SIZE).toFloat(),
-                        ),
-                        paint,
-                    )
+        for (i in pixels.indices) {
+            val diff = field[i] - sweep
+            val cellAlpha = when {
+                diff >= SOFTNESS / 2f -> 1f
+                diff <= -SOFTNESS / 2f -> 0f
+                else -> {
+                    val t = (diff / SOFTNESS + 0.5f).coerceIn(0f, 1f)
+                    t * t * (3f - 2f * t)
                 }
             }
+            val a = (cellAlpha * 255f).roundToInt().coerceIn(0, 255)
+            pixels[i] = (a shl 24) or 0x00FFFFFF
         }
 
+        val bitmap = imageBitmapOf(pixels, TILE_SIZE, TILE_SIZE)
         val shader = ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)
         val brush = ShaderBrush(shader)
         brushes[clamped] = brush
@@ -96,7 +96,7 @@ object DitherMatrix {
 }
 
 /**
- * Applies a smooth ordered Bayer dither dissolution mask to the composited content.
+ * Applies a silky Damascus wave dissolution mask to the composited content.
  * Accepts a continuous floating-point [progressProvider] (0.0f..1.0f) and maps it
  * dynamically at draw time to avoid recomposition during animation.
  */
@@ -113,3 +113,4 @@ fun Modifier.ditherDissolve(progressProvider: () -> Float): Modifier =
                 }
             }
         }
+

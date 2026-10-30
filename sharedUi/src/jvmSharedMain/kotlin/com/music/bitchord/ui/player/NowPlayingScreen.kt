@@ -93,6 +93,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import org.jetbrains.compose.resources.stringResource
@@ -1385,7 +1386,7 @@ fun NowPlayingScreen(
     // Synchronous handoff in composition: detects track change immediately on frame 0,
     // capturing the outgoing snapshot and pinning morphProgress to 0 so there is NEVER
     // a 1-frame jump or black flicker before the transition coroutine runs.
-    val songChanged = activeSongId != previousSongId || activeArtRequest != previousArtRequest
+    val songChanged = activeSongId != previousSongId || (activeSongId.isBlank() && activeArtRequest != previousArtRequest)
     if (songChanged) {
         if (transitionEnabled && (currentSleeveSnapshot.request != null || currentSleeveSnapshot.canvasFrame != null || lastRenderedCanvasFrame != null)) {
             outgoingSleeveSnapshot = currentSleeveSnapshot.copy(
@@ -1422,13 +1423,6 @@ fun NowPlayingScreen(
         }
     }
 
-    LaunchedEffect(previousSongId, previousArtRequest) {
-        if (transitionPending) {
-            sleeveMorphProgress.snapTo(0f)
-            transitionPending = false
-        }
-    }
-
     // Automix progress synchronisation
     LaunchedEffect(outgoingSleeveSnapshot, mixing, smartMixProgress.value) {
         if (outgoingSleeveSnapshot != null && mixing) {
@@ -1453,52 +1447,38 @@ fun NowPlayingScreen(
         }
     }
 
-    // Crossfade or track skip transition completion
-    LaunchedEffect(outgoingSleeveSnapshot, transitionPending, art.loaded, canvasRendered, art.failed, mixing) {
-        if (outgoingSleeveSnapshot != null && !transitionPending && !mixing && sleeveMorphProgress.value < 1f) {
-            val incomingReady = art.loaded || canvasRendered || art.failed
-            if (incomingReady) {
-                val durationMs = if (crossfadeSeconds > 0) {
-                    (crossfadeSeconds * 1000).coerceIn(800, 1800)
-                } else if (smartFadeOn || mixing) {
-                    1200
-                } else {
-                    850
-                }
-                sleeveMorphProgress.animateTo(
-                    targetValue = 1f,
-                    animationSpec = tween(
-                        durationMillis = durationMs,
-                        easing = ArtworkMorphEasing,
-                    ),
-                )
-                outgoingSleeveSnapshot = null
-            }
-        }
-    }
+    // Single authoritative transition controller for crossfade & track skip
+    LaunchedEffect(outgoingSleeveSnapshot) {
+        val snapshot = outgoingSleeveSnapshot ?: return@LaunchedEffect
+        if (mixing) return@LaunchedEffect
 
-    // Safety timeout in case incoming artwork/canvas takes long to load
-    LaunchedEffect(outgoingSleeveSnapshot, transitionPending) {
-        if (outgoingSleeveSnapshot != null && !transitionPending && sleeveMorphProgress.value < 1f) {
-            delay(400)
-            if (outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f && !mixing) {
-                val durationMs = if (crossfadeSeconds > 0) {
-                    (crossfadeSeconds * 1000).coerceIn(800, 1800)
-                } else if (smartFadeOn || mixing) {
-                    1200
-                } else {
-                    850
-                }
-                sleeveMorphProgress.animateTo(
-                    targetValue = 1f,
-                    animationSpec = tween(
-                        durationMillis = durationMs,
-                        easing = ArtworkMorphEasing,
-                    ),
-                )
-                outgoingSleeveSnapshot = null
+        sleeveMorphProgress.snapTo(0f)
+        transitionPending = false
+
+        // Give incoming artwork a brief moment to finish loading if already in flight,
+        // without ever blocking or delaying for more than 250ms
+        if (!art.loaded && !canvasRendered && !art.failed) {
+            withTimeoutOrNull(250) {
+                snapshotFlow { art.loaded || canvasRendered || art.failed }.first { it }
             }
         }
+
+        val durationMs = if (crossfadeSeconds > 0) {
+            (crossfadeSeconds * 1000).coerceIn(800, 1800)
+        } else if (smartFadeOn) {
+            1200
+        } else {
+            850
+        }
+
+        sleeveMorphProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(
+                durationMillis = durationMs,
+                easing = ArtworkMorphEasing,
+            ),
+        )
+        outgoingSleeveSnapshot = null
     }
 
     val isMorphing = transitionEnabled && outgoingSleeveSnapshot != null && (transitionPending || sleeveMorphProgress.value < 1f)

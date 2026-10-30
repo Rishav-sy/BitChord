@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.audio.bluetooth.BluetoothAudioTracker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +61,7 @@ object LosslessOutput {
     val state: StateFlow<State> = _state.asStateFlow()
 
     /** The answer every gate reads. False until [init] has looked. */
-    val capable: Boolean get() = _state.value.capable
+    val capable: Boolean get() = _state.value.capable || AppSettings.ignoreLosslessOutputCheck.value
 
     private var audioManager: AudioManager? = null
     private var tracker: BluetoothAudioTracker? = null

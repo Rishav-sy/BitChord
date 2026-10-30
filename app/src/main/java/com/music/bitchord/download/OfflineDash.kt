@@ -2,7 +2,9 @@ package com.music.bitchord.download
 
 import android.content.Context
 import android.net.Uri
+import androidx.media3.common.MimeTypes
 import com.music.bitchord.data.Http
+import com.music.bitchord.playback.StreamContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -62,7 +64,9 @@ internal object OfflineDash {
 
     /** Whether [url] is a manifest this can save, judged the way the app judges every other one — on the extension. */
     fun handles(url: String): Boolean =
-        url.substringBefore('?').endsWith(".mpd", ignoreCase = true)
+        url.substringBefore('?').endsWith(".mpd", ignoreCase = true) ||
+            url.startsWith("data:application/dash+xml", ignoreCase = true) ||
+            StreamContainer.manifestMimeOf(url) == MimeTypes.APPLICATION_MPD
 
     suspend fun save(
         context: Context,
@@ -84,12 +88,23 @@ internal object OfflineDash {
             fun request(target: String) = Request.Builder().url(target).apply {
                 headers.forEach { (name, value) -> header(name, value) }
             }.build()
-            val manifest = Http.client.newCall(request(url)).execute().use { response ->
-                if (!response.isSuccessful) error("DASH manifest failed (HTTP ${response.code})")
-                response.body?.string() ?: error("Empty DASH manifest")
+            val manifest = if (url.startsWith("data:application/dash+xml;base64,", ignoreCase = true)) {
+                val b64 = url.substringAfter("data:application/dash+xml;base64,")
+                String(android.util.Base64.decode(b64, android.util.Base64.DEFAULT), Charsets.UTF_8)
+            } else if (url.startsWith("data:", ignoreCase = true)) {
+                android.net.Uri.decode(url.substringAfter(","))
+            } else {
+                Http.client.newCall(request(url)).execute().use { response ->
+                    if (!response.isSuccessful) error("DASH manifest failed (HTTP ${response.code})")
+                    response.body?.string() ?: error("Empty DASH manifest")
+                }
             }
             val plan = parse(manifest)
-            val base = url.toHttpUrlOrNull() ?: error("Invalid DASH URL")
+            val base = if (url.startsWith("data:", ignoreCase = true)) {
+                if (plan.initialization.startsWith("http")) plan.initialization.toHttpUrlOrNull() else null
+            } else {
+                url.toHttpUrlOrNull()
+            } ?: error("Invalid DASH URL")
 
             // The initialisation segment is segment-00000 so the numbering
             // matches what OfflineHls produces for the same stream — the
@@ -97,7 +112,7 @@ internal object OfflineDash {
             val remotes = listOf(plan.initialization) + plan.media
             remotes.forEachIndexed { index, remote ->
                 coroutineContext.ensureActive()
-                val target = base.resolve(remote)?.toString() ?: error("Invalid DASH segment")
+                val target = base.resolve(remote)?.toString() ?: (if (remote.startsWith("http")) remote else error("Invalid DASH segment"))
                 Http.client.newCall(request(target)).execute().use { response ->
                     if (!response.isSuccessful) error("DASH segment failed (HTTP ${response.code})")
                     val body = response.body?.byteStream() ?: error("Empty DASH segment")
