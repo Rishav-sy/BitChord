@@ -1798,7 +1798,7 @@ class CrossfadeController(
             handOff(out, player)
         }
         publishBlend(out, player)
-        if (AppSettings.smartMixView.value != null) AppSettings.smartMixProgress.value = progress
+        AppSettings.smartMixProgress.value = progress
         rideFilters(incomingAt, outgoingAt)
 
         // Finish when the fade runs its course or its setting is switched off.
@@ -2468,6 +2468,8 @@ class CrossfadeController(
         }
         publishLoopBeat(session, m, now)
         announceLoopPosition()
+        val loopProgress = if (session.clock.elementAt > 0) (m / session.clock.elementAt).coerceIn(0.0, 1.0).toFloat() else 0f
+        AppSettings.smartMixProgress.value = loopProgress
         if (m >= session.clock.elementAt + LOOP_END_MARGIN_SECONDS) finishLoop()
     }
 

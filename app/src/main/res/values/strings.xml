@@ -384,6 +384,8 @@
     <string name="canvas_transition_style_subtitle">Visual transition when changing songs during Automix or Crossfade</string>
     <string name="canvas_transition_morph">Morph (Cross Dissolve)</string>
     <string name="canvas_transition_morph_desc">Seamless fluid cross-dissolve with subtle scale morph</string>
+    <string name="canvas_transition_dither">Dither Dissolve</string>
+    <string name="canvas_transition_dither_desc">Retro-modern 8×8 ordered Bayer dither dissolution</string>
     <string name="canvas_transition_crossfade">Crossfade (Dissolve)</string>
     <string name="canvas_transition_crossfade_desc">Classic equal-power cross-dissolve</string>
     <string name="canvas_transition_zoom">Zoom Morph</string>

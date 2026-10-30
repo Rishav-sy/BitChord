@@ -98,6 +98,8 @@ import androidx.compose.ui.Modifier
 import org.jetbrains.compose.resources.stringResource
 import org.jetbrains.compose.resources.stringArrayResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import com.music.bitchord.ui.graphics.ditherDissolve
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
@@ -830,6 +832,7 @@ fun NowPlayingScreen(
     val crossfadeSeconds by PlayerSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val canvasTransitionStyle by PlayerSettings.canvasTransitionStyle.collectAsStateWithLifecycle()
     val smartMixProgress = PlayerSettings.smartMixProgress.collectAsStateWithLifecycle()
+    val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
 
     val transitionConditionsMet = (smartFadeOn || crossfadeSeconds > 0 || mixing)
     val transitionEnabled = transitionConditionsMet && canvasTransitionStyle != CanvasTransitionStyle.NONE
@@ -1369,17 +1372,49 @@ fun NowPlayingScreen(
     var outgoingSleeveSnapshot by remember {
         mutableStateOf<SleeveVisualSnapshot?>(null)
     }
+    var lastRenderedCanvasFrame by remember { mutableStateOf<ImageBitmap?>(null) }
+    var previousSongId by remember { mutableStateOf(song.videoId) }
+    var previousArtRequest by remember { mutableStateOf(art.request) }
+    var transitionPending by remember { mutableStateOf(false) }
+
     val sleeveMorphProgress = remember { Animatable(1f) }
 
     val activeSongId = song.videoId
     val activeArtRequest = art.request
 
+    // Synchronous handoff in composition: detects track change immediately on frame 0,
+    // capturing the outgoing snapshot and pinning morphProgress to 0 so there is NEVER
+    // a 1-frame jump or black flicker before the transition coroutine runs.
+    val songChanged = activeSongId != previousSongId || activeArtRequest != previousArtRequest
+    if (songChanged) {
+        if (transitionEnabled && (currentSleeveSnapshot.request != null || currentSleeveSnapshot.canvasFrame != null || lastRenderedCanvasFrame != null)) {
+            outgoingSleeveSnapshot = currentSleeveSnapshot.copy(
+                canvasFrame = lastRenderedCanvasFrame ?: canvasFrame ?: currentSleeveSnapshot.canvasFrame
+            )
+            transitionPending = true
+        } else {
+            outgoingSleeveSnapshot = null
+            transitionPending = false
+        }
+        currentSleeveSnapshot = SleeveVisualSnapshot(
+            videoId = activeSongId,
+            request = activeArtRequest,
+            canvas = canvas,
+            canvasFrame = null,
+            isFullscreen = clipFullscreen,
+            aspect = canvasAspect,
+            heroActive = heroClipMounted != null,
+        )
+        previousSongId = activeSongId
+        previousArtRequest = activeArtRequest
+    }
+
     // Keep current snapshot updated with latest canvas and frame while playing
-    LaunchedEffect(activeSongId, canvas, canvasFrame, clipFullscreen, canvasAspect, heroClipMounted) {
+    LaunchedEffect(activeSongId, canvas, canvasFrame, lastRenderedCanvasFrame, clipFullscreen, canvasAspect, heroClipMounted) {
         if (currentSleeveSnapshot.videoId == activeSongId) {
             currentSleeveSnapshot = currentSleeveSnapshot.copy(
                 canvas = canvas ?: currentSleeveSnapshot.canvas,
-                canvasFrame = canvasFrame ?: currentSleeveSnapshot.canvasFrame,
+                canvasFrame = canvasFrame ?: lastRenderedCanvasFrame ?: currentSleeveSnapshot.canvasFrame,
                 isFullscreen = clipFullscreen,
                 aspect = canvasAspect,
                 heroActive = heroClipMounted != null,
@@ -1387,26 +1422,10 @@ fun NowPlayingScreen(
         }
     }
 
-    LaunchedEffect(activeSongId, activeArtRequest) {
-        if (currentSleeveSnapshot.videoId != activeSongId || currentSleeveSnapshot.request != activeArtRequest) {
-            if (transitionEnabled) {
-                outgoingSleeveSnapshot = currentSleeveSnapshot.copy(
-                    canvasFrame = canvasFrame ?: currentSleeveSnapshot.canvasFrame
-                )
-                sleeveMorphProgress.snapTo(0f)
-            } else {
-                outgoingSleeveSnapshot = null
-                sleeveMorphProgress.snapTo(1f)
-            }
-            currentSleeveSnapshot = SleeveVisualSnapshot(
-                videoId = activeSongId,
-                request = activeArtRequest,
-                canvas = canvas,
-                canvasFrame = null,
-                isFullscreen = clipFullscreen,
-                aspect = canvasAspect,
-                heroActive = heroClipMounted != null,
-            )
+    LaunchedEffect(previousSongId, previousArtRequest) {
+        if (transitionPending) {
+            sleeveMorphProgress.snapTo(0f)
+            transitionPending = false
         }
     }
 
@@ -1435,16 +1454,16 @@ fun NowPlayingScreen(
     }
 
     // Crossfade or track skip transition completion
-    LaunchedEffect(outgoingSleeveSnapshot, art.loaded, canvasRendered, art.failed, mixing) {
-        if (outgoingSleeveSnapshot != null && !mixing && sleeveMorphProgress.value < 1f) {
+    LaunchedEffect(outgoingSleeveSnapshot, transitionPending, art.loaded, canvasRendered, art.failed, mixing) {
+        if (outgoingSleeveSnapshot != null && !transitionPending && !mixing && sleeveMorphProgress.value < 1f) {
             val incomingReady = art.loaded || canvasRendered || art.failed
             if (incomingReady) {
                 val durationMs = if (crossfadeSeconds > 0) {
-                    (crossfadeSeconds * 1000).coerceIn(600, 1500)
+                    (crossfadeSeconds * 1000).coerceIn(600, 1600)
                 } else if (smartFadeOn) {
-                    1000
+                    1100
                 } else {
-                    650
+                    750
                 }
                 sleeveMorphProgress.animateTo(
                     targetValue = 1f,
@@ -1459,14 +1478,21 @@ fun NowPlayingScreen(
     }
 
     // Safety timeout in case incoming artwork/canvas takes long to load
-    LaunchedEffect(outgoingSleeveSnapshot) {
-        if (outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f) {
-            delay(1200)
-            if (outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f) {
+    LaunchedEffect(outgoingSleeveSnapshot, transitionPending) {
+        if (outgoingSleeveSnapshot != null && !transitionPending && sleeveMorphProgress.value < 1f) {
+            delay(400)
+            if (outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f && !mixing) {
+                val durationMs = if (crossfadeSeconds > 0) {
+                    (crossfadeSeconds * 1000).coerceIn(600, 1600)
+                } else if (smartFadeOn) {
+                    1100
+                } else {
+                    750
+                }
                 sleeveMorphProgress.animateTo(
                     targetValue = 1f,
                     animationSpec = tween(
-                        durationMillis = 500,
+                        durationMillis = durationMs,
                         easing = ArtworkMorphEasing,
                     ),
                 )
@@ -1475,14 +1501,29 @@ fun NowPlayingScreen(
         }
     }
 
-    val isMorphing = transitionEnabled && outgoingSleeveSnapshot != null && sleeveMorphProgress.value < 1f
-    val morphProgress = sleeveMorphProgress.value
-    val outAlpha = if (isMorphing) (1f - morphProgress).coerceIn(0f, 1f) else 0f
-    val inAlpha = if (isMorphing) morphProgress.coerceIn(0f, 1f) else 1f
+    val isMorphing = transitionEnabled && outgoingSleeveSnapshot != null && (transitionPending || sleeveMorphProgress.value < 1f)
+    val morphProgress = if (transitionPending) 0f else sleeveMorphProgress.value
+    val isDither = canvasTransitionStyle == CanvasTransitionStyle.DITHER
+    val outAlpha = when {
+        !isMorphing -> 0f
+        isDither -> 1f
+        else -> kotlin.math.cos(morphProgress * (kotlin.math.PI.toFloat() / 2f)).coerceIn(0f, 1f)
+    }
+    val inAlpha = when {
+        !isMorphing -> 1f
+        isDither -> 1f
+        else -> kotlin.math.sin(morphProgress * (kotlin.math.PI.toFloat() / 2f)).coerceIn(0f, 1f)
+    }
     val (outScale, inScale) = when (canvasTransitionStyle) {
-        CanvasTransitionStyle.MORPH -> (1.0f + 0.06f * morphProgress) to (if (isMorphing) 0.94f + 0.06f * morphProgress else 1f)
-        CanvasTransitionStyle.ZOOM -> (1.0f + 0.12f * morphProgress) to (if (isMorphing) 0.88f + 0.12f * morphProgress else 1f)
+        CanvasTransitionStyle.MORPH -> (1.0f + 0.08f * morphProgress) to (if (isMorphing) 0.92f + 0.08f * morphProgress else 1f)
+        CanvasTransitionStyle.ZOOM -> (1.0f + 0.16f * morphProgress) to (if (isMorphing) 0.84f + 0.16f * morphProgress else 1f)
         else -> 1.0f to 1.0f
+    }
+    val canMorphBlur = !reduceDynamicBlur && renderEffectBlurSupported
+    val morphBlur = if (isMorphing && canMorphBlur && canvasTransitionStyle == CanvasTransitionStyle.MORPH) {
+        (kotlin.math.sin(morphProgress * kotlin.math.PI.toFloat()) * 8f).dp
+    } else {
+        0.dp
     }
 
     // The setting defaults on, restoring the five-second stand-down, but the
@@ -2356,29 +2397,6 @@ fun NowPlayingScreen(
                 // Mount once, behind the controls. A known portrait aspect changes the
                 // invisible view to full-player bounds before its first frame is shown.
                 if (heroMode && heroHeight > 0.dp) {
-                    val outgoingHero = outgoingSleeveSnapshot
-                    if (isMorphing && outgoingHero != null && (outgoingHero.heroActive || outgoingHero.canvasFrame != null)) {
-                        val heroFrame = outgoingHero.canvasFrame
-                        if (heroFrame != null) {
-                            Image(
-                                bitmap = heroFrame,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .then(
-                                        if (outgoingHero.isFullscreen || outgoingHero.aspect in 0.01f..0.99f) Modifier.fillMaxSize()
-                                        else Modifier.fillMaxWidth().height(heroHeight),
-                                    )
-                                    .graphicsLayer {
-                                        alpha = outAlpha * (1f - 2f * p()).coerceIn(0f, 1f) * dockFade()
-                                        scaleX = outScale
-                                        scaleY = outScale
-                                    },
-                            )
-                        }
-                    }
-
                     heroClipMounted?.let { clip ->
                         CanvasArtworkPlayer(
                             canvas = clip,
@@ -2412,13 +2430,17 @@ fun NowPlayingScreen(
                             // TextureView doesn't reliably take the fade from a
                             // Compose layer around it.
                             presentationAlpha = {
-                                (1f - 2f * p()).coerceIn(0f, 1f) * dockFade() * (if (isMorphing) inAlpha else 1f)
+                                val base = (1f - 2f * p()).coerceIn(0f, 1f) * dockFade()
+                                if (isMorphing && !isDither) base * inAlpha else base
                             },
                             onRenderedChanged = { canvasRendered = it },
                             onFrameCaptured = {
                                 if (!tabletArtworkBackdrop &&
                                     !lyricsOpen && !queueOpen && !queueDragging
-                                ) canvasFrame = it
+                                ) {
+                                    canvasFrame = it
+                                    lastRenderedCanvasFrame = it
+                                }
                             },
                             // The full-screen Spotify video has no mesh to re-tint.
                             // Keeping this null also removes the old three-second GPU
@@ -2453,6 +2475,48 @@ fun NowPlayingScreen(
                                 }
                                 .hazeSource(playerHaze),
                         )
+                    }
+
+                    val outgoingHero = outgoingSleeveSnapshot
+                    if (isMorphing && outgoingHero != null && (outgoingHero.heroActive || outgoingHero.canvasFrame != null || outgoingHero.request != null)) {
+                        val heroFrame = outgoingHero.canvasFrame
+                        val heroMod = Modifier
+                            .align(Alignment.TopStart)
+                            .then(
+                                if (outgoingHero.isFullscreen || outgoingHero.aspect in 0.01f..0.99f) Modifier.fillMaxSize()
+                                else Modifier.fillMaxWidth().height(heroHeight),
+                            )
+                            .then(
+                                if (isDither) {
+                                    Modifier.ditherDissolve { (morphProgress * 64).toInt() }
+                                        .graphicsLayer {
+                                            alpha = (1f - 2f * p()).coerceIn(0f, 1f) * dockFade()
+                                        }
+                                } else {
+                                    Modifier
+                                        .graphicsLayer {
+                                            alpha = outAlpha * (1f - 2f * p()).coerceIn(0f, 1f) * dockFade()
+                                            scaleX = outScale
+                                            scaleY = outScale
+                                        }
+                                        .then(if (morphBlur > 0.dp) Modifier.blur(morphBlur) else Modifier)
+                                }
+                            )
+                        if (heroFrame != null) {
+                            Image(
+                                bitmap = heroFrame,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = heroMod,
+                            )
+                        } else if (outgoingHero.request != null) {
+                            AsyncImage(
+                                model = outgoingHero.request,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = heroMod,
+                            )
+                        }
                     }
                 }
 
@@ -3336,48 +3400,17 @@ fun NowPlayingScreen(
                                 }
                             }
 
-                            // 1. Outgoing transition layer: keeps the previous track's art/canvas rendered during loading
-                            // and smoothly scales / fades out according to canvasTransitionStyle.
-                            val outgoing = outgoingSleeveSnapshot
-                            if (outgoing != null && isMorphing) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .graphicsLayer {
-                                            alpha = outAlpha
-                                            scaleX = outScale
-                                            scaleY = outScale
-                                        },
-                                ) {
-                                    if (outgoing.canvasFrame != null) {
-                                        Image(
-                                            bitmap = outgoing.canvasFrame,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    } else if (outgoing.request != null) {
-                                        AsyncImage(
-                                            model = outgoing.request,
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    }
-                                }
-                            }
-
-                            // 2. Incoming transition layer: smoothly scales and dissolves in.
+                            // 1. Incoming transition layer (sits underneath):
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        if (isMorphing) {
-                                            alpha = inAlpha
+                                        if (isMorphing && !isDither) {
                                             scaleX = inScale
                                             scaleY = inScale
                                         }
-                                    },
+                                    }
+                                    .then(if (morphBlur > 0.dp) Modifier.blur(morphBlur) else Modifier),
                             ) {
                                 AsyncImage(
                                     model = art.request,
@@ -3400,11 +3433,51 @@ fun NowPlayingScreen(
                                             onFrameCaptured = {
                                                 if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
                                                     canvasFrame = it
+                                                    lastRenderedCanvasFrame = it
                                                 }
                                             },
                                             refreshFrameEveryMs = if (
                                                 tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving
                                             ) null else meshRefreshMs,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 2. Outgoing transition layer (sits on top, morphing / dissolving away):
+                            val outgoing = outgoingSleeveSnapshot
+                            if (outgoing != null && isMorphing) {
+                                val outgoingModifier = Modifier
+                                    .fillMaxSize()
+                                    .then(
+                                        if (isDither) {
+                                            Modifier.ditherDissolve { (morphProgress * 64).toInt() }
+                                        } else {
+                                            Modifier
+                                                .graphicsLayer {
+                                                    alpha = outAlpha
+                                                    scaleX = outScale
+                                                    scaleY = outScale
+                                                }
+                                                .then(if (morphBlur > 0.dp) Modifier.blur(morphBlur) else Modifier)
+                                        }
+                                    )
+                                Box(
+                                    modifier = outgoingModifier,
+                                ) {
+                                    if (outgoing.canvasFrame != null) {
+                                        Image(
+                                            bitmap = outgoing.canvasFrame,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    } else if (outgoing.request != null) {
+                                        AsyncImage(
+                                            model = outgoing.request,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize(),
                                         )
                                     }

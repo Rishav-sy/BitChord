@@ -2239,6 +2239,7 @@ fun SettingsScreen(
                                 Text(
                                     text = when (style) {
                                         CanvasTransitionStyle.MORPH -> stringResource(R.string.canvas_transition_morph_desc)
+                                        CanvasTransitionStyle.DITHER -> stringResource(R.string.canvas_transition_dither_desc)
                                         CanvasTransitionStyle.CROSSFADE -> stringResource(R.string.canvas_transition_crossfade_desc)
                                         CanvasTransitionStyle.ZOOM -> stringResource(R.string.canvas_transition_zoom_desc)
                                         CanvasTransitionStyle.NONE -> stringResource(R.string.canvas_transition_none_desc)
@@ -2372,6 +2373,7 @@ private fun DownloadQuality.localizedLabel(): String = stringResource(
 private fun CanvasTransitionStyle.localizedLabel(): String = stringResource(
     when (this) {
         CanvasTransitionStyle.MORPH -> R.string.canvas_transition_morph
+        CanvasTransitionStyle.DITHER -> R.string.canvas_transition_dither
         CanvasTransitionStyle.CROSSFADE -> R.string.canvas_transition_crossfade
         CanvasTransitionStyle.ZOOM -> R.string.canvas_transition_zoom
         CanvasTransitionStyle.NONE -> R.string.canvas_transition_none

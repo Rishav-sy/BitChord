@@ -344,6 +344,7 @@ sealed interface LyricsRomanizationResult {
 /** Style of visual transition when changing tracks with artwork and canvas. */
 enum class CanvasTransitionStyle(val id: String) {
     MORPH("morph"),
+    DITHER("dither"),
     CROSSFADE("crossfade"),
     ZOOM("zoom"),
     NONE("none");
