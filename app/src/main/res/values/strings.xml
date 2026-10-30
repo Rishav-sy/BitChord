@@ -378,6 +378,16 @@
     <string name="dark">Dark</string>
     <string name="full_screen_cover_art_subtitle">Runs the cover to the edges of the player instead of a square sleeve</string>
     <string name="animated_cover_art_subtitle">Plays the looping video some releases ship instead of a still sleeve</string>
+    <string name="canvas_transition_style_title">Canvas &amp; artwork transition</string>
+    <string name="canvas_transition_style_subtitle">Visual transition when changing songs during Automix or Crossfade</string>
+    <string name="canvas_transition_morph">Morph (Cross Dissolve)</string>
+    <string name="canvas_transition_morph_desc">Seamless fluid cross-dissolve with subtle scale morph</string>
+    <string name="canvas_transition_crossfade">Crossfade (Dissolve)</string>
+    <string name="canvas_transition_crossfade_desc">Classic equal-power cross-dissolve</string>
+    <string name="canvas_transition_zoom">Zoom Morph</string>
+    <string name="canvas_transition_zoom_desc">Dynamic deep zoom dissolve</string>
+    <string name="canvas_transition_none">None (Instant)</string>
+    <string name="canvas_transition_none_desc">Immediate cut with no animation</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay won’t suggest a song already played or suggested this session</string>
     <string name="download_quality_subtitle">%1$s per track, whatever the connection</string>
     <string name="filter_non_music_audio">Filter non-music audio</string>

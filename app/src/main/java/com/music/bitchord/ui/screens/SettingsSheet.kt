@@ -97,7 +97,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
+import com.music.bitchord.ui.player.CanvasTransitionStyle
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -229,6 +231,8 @@ fun SettingsScreen(
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
+    val canvasTransitionStyle by AppSettings.canvasTransitionStyle.collectAsStateWithLifecycle()
+    var showCanvasTransitionDialog by remember { mutableStateOf(false) }
     val signatureApiEnabled by AppSettings.signatureApiEnabled.collectAsStateWithLifecycle()
     val signatureApiUrl by AppSettings.signatureApiUrl.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
@@ -964,6 +968,32 @@ fun SettingsScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        Chevron()
+                    }
+                }
+                val transitionTitle = stringResource(R.string.canvas_transition_style_title)
+                row(transitionTitle, "canvas", "transition", "morph", "dissolve", divided = false) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showCanvasTransitionDialog = true }
+                            .padding(start = ROW_INSET, end = ROW_INSET, top = 4.dp, bottom = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = transitionTitle,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = canvasTransitionStyle.localizedLabel(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Chevron()
                     }
                 }
@@ -2156,6 +2186,70 @@ fun SettingsScreen(
             },
         )
     }
+
+    if (showCanvasTransitionDialog) {
+        AlertDialog(
+            onDismissRequest = { showCanvasTransitionDialog = false },
+            title = { Text(stringResource(R.string.canvas_transition_style_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(R.string.canvas_transition_style_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                    CanvasTransitionStyle.entries.forEach { style ->
+                        val selected = style == canvasTransitionStyle
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    AppSettings.setCanvasTransitionStyle(style)
+                                    showCanvasTransitionDialog = false
+                                }
+                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = selected,
+                                onClick = {
+                                    AppSettings.setCanvasTransitionStyle(style)
+                                    showCanvasTransitionDialog = false
+                                },
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = style.localizedLabel(),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                                Text(
+                                    text = when (style) {
+                                        CanvasTransitionStyle.MORPH -> stringResource(R.string.canvas_transition_morph_desc)
+                                        CanvasTransitionStyle.CROSSFADE -> stringResource(R.string.canvas_transition_crossfade_desc)
+                                        CanvasTransitionStyle.ZOOM -> stringResource(R.string.canvas_transition_zoom_desc)
+                                        CanvasTransitionStyle.NONE -> stringResource(R.string.canvas_transition_none_desc)
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showCanvasTransitionDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -2262,6 +2356,16 @@ private fun DownloadQuality.localizedLabel(): String = stringResource(
         DownloadQuality.STANDARD -> R.string.standard
         DownloadQuality.HIGH -> R.string.high
         DownloadQuality.LOSSLESS -> R.string.lossless
+    },
+)
+
+@Composable
+private fun CanvasTransitionStyle.localizedLabel(): String = stringResource(
+    when (this) {
+        CanvasTransitionStyle.MORPH -> R.string.canvas_transition_morph
+        CanvasTransitionStyle.CROSSFADE -> R.string.canvas_transition_crossfade
+        CanvasTransitionStyle.ZOOM -> R.string.canvas_transition_zoom
+        CanvasTransitionStyle.NONE -> R.string.canvas_transition_none
     },
 )
 

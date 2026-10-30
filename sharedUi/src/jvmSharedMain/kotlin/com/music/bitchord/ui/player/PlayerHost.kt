@@ -265,6 +265,10 @@ interface PlayerSettingsSource {
     val translationLanguage: StateFlow<String>
     val versionAlignmentInProgress: StateFlow<Boolean>
 
+    val canvasTransitionStyle: StateFlow<CanvasTransitionStyle>
+    val crossfadeSeconds: StateFlow<Int>
+
+    fun setCanvasTransitionStyle(value: CanvasTransitionStyle)
     fun setLastPlayerScreen(value: LastPlayerScreen)
     fun setLyricsOffsetMs(value: Int)
 }
@@ -334,6 +338,19 @@ sealed interface LyricsRomanizationResult {
     data class Romanized(val lines: List<LyricLine>) : LyricsRomanizationResult
     data object AlreadyRomanized : LyricsRomanizationResult
     data object Unavailable : LyricsRomanizationResult
+}
+
+/** Style of visual transition when changing tracks with artwork and canvas. */
+enum class CanvasTransitionStyle(val id: String) {
+    MORPH("morph"),
+    CROSSFADE("crossfade"),
+    ZOOM("zoom"),
+    NONE("none");
+
+    companion object {
+        fun fromId(id: String?): CanvasTransitionStyle =
+            entries.firstOrNull { it.id == id } ?: MORPH
+    }
 }
 
 /** How a clip fills the bounds supplied by its caller. */
