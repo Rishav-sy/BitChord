@@ -378,6 +378,8 @@
     <string name="dark">Dark</string>
     <string name="full_screen_cover_art_subtitle">Runs the cover to the edges of the player instead of a square sleeve</string>
     <string name="animated_cover_art_subtitle">Plays the looping video some releases ship instead of a still sleeve</string>
+    <string name="enable_spotify_canvas">Enable Spotify Canvas</string>
+    <string name="enable_spotify_canvas_subtitle">Allow looping video canvas from Spotify</string>
     <string name="canvas_transition_style_title">Canvas &amp; artwork transition</string>
     <string name="canvas_transition_style_subtitle">Visual transition when changing songs during Automix or Crossfade</string>
     <string name="canvas_transition_morph">Morph (Cross Dissolve)</string>

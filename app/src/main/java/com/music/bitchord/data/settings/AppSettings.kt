@@ -475,6 +475,9 @@ object AppSettings {
     /** Automatically collapses the lower controls after Spotify Canvas settles. */
     val spotifyCanvasAutoHide = MutableStateFlow(true)
 
+    /** Enables or disables Spotify Canvas video playback entirely. */
+    val enableSpotifyCanvas = MutableStateFlow(true)
+
     /** Tries Spotify before Apple Music and the other animated-art providers. */
     val prioritizeSpotifyCanvas = MutableStateFlow(false)
 
@@ -930,6 +933,7 @@ object AppSettings {
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
+        enableSpotifyCanvas.value = prefs.getBoolean(KEY_ENABLE_SPOTIFY_CANVAS, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
         canvasTransitionStyle.value = CanvasTransitionStyle.fromId(
             prefs.getString(KEY_CANVAS_TRANSITION_STYLE, CanvasTransitionStyle.MORPH.id),
@@ -1513,6 +1517,11 @@ object AppSettings {
     fun setSpotifyCanvasAutoHide(value: Boolean) {
         spotifyCanvasAutoHide.value = value
         prefs.edit().putBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, value).apply()
+    }
+
+    fun setEnableSpotifyCanvas(value: Boolean) {
+        enableSpotifyCanvas.value = value
+        prefs.edit().putBoolean(KEY_ENABLE_SPOTIFY_CANVAS, value).apply()
     }
 
     fun setPrioritizeSpotifyCanvas(value: Boolean) {
@@ -2112,6 +2121,7 @@ object AppSettings {
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
     private const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"
+    private const val KEY_ENABLE_SPOTIFY_CANVAS = "enable_spotify_canvas"
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_CANVAS_TRANSITION_STYLE = "canvas_transition_style"
     private const val KEY_SIGNATURE_API_ENABLED = "signature_api_enabled"

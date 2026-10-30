@@ -79,6 +79,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val smartMixProgress get() = AppSettings.smartMixProgress
         override val smartTransitionWindow get() = AppSettings.smartTransitionWindow
         override val spotifyCanvasAutoHide get() = AppSettings.spotifyCanvasAutoHide
+        override val enableSpotifyCanvas get() = AppSettings.enableSpotifyCanvas
         override val syncedLyrics get() = AppSettings.syncedLyrics
         override val translationLanguage get() = AppSettings.translationLanguage
         override val versionAlignmentInProgress get() = AppSettings.versionAlignmentInProgress

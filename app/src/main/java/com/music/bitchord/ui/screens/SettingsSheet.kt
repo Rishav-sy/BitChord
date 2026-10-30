@@ -231,6 +231,7 @@ fun SettingsScreen(
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
+    val enableSpotifyCanvas by AppSettings.enableSpotifyCanvas.collectAsStateWithLifecycle()
     val canvasTransitionStyle by AppSettings.canvasTransitionStyle.collectAsStateWithLifecycle()
     var showCanvasTransitionDialog by remember { mutableStateOf(false) }
     val signatureApiEnabled by AppSettings.signatureApiEnabled.collectAsStateWithLifecycle()
@@ -951,6 +952,14 @@ fun SettingsScreen(
                         onCheckedChange = AppSettings::setCanvasOverCellular,
                     )
                 }
+                val enableSpotifyCanvasTitle = stringResource(R.string.enable_spotify_canvas)
+                row(enableSpotifyCanvasTitle, "spotify", "canvas", "disable", divided = false) {
+                    SettingsSubRow(
+                        title = enableSpotifyCanvasTitle,
+                        checked = enableSpotifyCanvas,
+                        onCheckedChange = AppSettings::setEnableSpotifyCanvas,
+                    )
+                }
                 val spotifyCanvasTitle = stringResource(R.string.integrate_spotify_canvas)
                 row(spotifyCanvasTitle, "spotify", "canvas", divided = false) {
                     Row(
@@ -971,31 +980,31 @@ fun SettingsScreen(
                         Chevron()
                     }
                 }
-                val transitionTitle = stringResource(R.string.canvas_transition_style_title)
-                row(transitionTitle, "canvas", "transition", "morph", "dissolve", divided = false) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showCanvasTransitionDialog = true }
-                            .padding(start = ROW_INSET, end = ROW_INSET, top = 4.dp, bottom = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = transitionTitle,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = canvasTransitionStyle.localizedLabel(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Chevron()
+            }
+            val transitionTitle = stringResource(R.string.canvas_transition_style_title)
+            row(transitionTitle, "canvas", "transition", "morph", "dissolve", "crossfade", divided = false) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showCanvasTransitionDialog = true }
+                        .padding(start = ROW_INSET, end = ROW_INSET, top = 4.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = transitionTitle,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = canvasTransitionStyle.localizedLabel(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
+                    Chevron()
                 }
             }
             val artistSignaturesTitle = stringResource(R.string.artist_signatures)

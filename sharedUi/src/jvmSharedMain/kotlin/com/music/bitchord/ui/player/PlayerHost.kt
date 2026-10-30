@@ -261,6 +261,7 @@ interface PlayerSettingsSource {
     val smartMixProgress: StateFlow<Float>
     val smartTransitionWindow: StateFlow<TransitionWindow?>
     val spotifyCanvasAutoHide: StateFlow<Boolean>
+    val enableSpotifyCanvas: StateFlow<Boolean>
     val syncedLyrics: StateFlow<Boolean>
     val translationLanguage: StateFlow<String>
     val versionAlignmentInProgress: StateFlow<Boolean>

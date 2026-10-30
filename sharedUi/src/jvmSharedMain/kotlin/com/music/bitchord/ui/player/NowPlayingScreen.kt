@@ -824,6 +824,7 @@ fun NowPlayingScreen(
     // CanvasRepository, which is also where the "is this actually the right
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
+    val enableSpotifyCanvas by PlayerSettings.enableSpotifyCanvas.collectAsStateWithLifecycle()
     val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
     val smartFadeOn by PlayerSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val crossfadeSeconds by PlayerSettings.crossfadeSeconds.collectAsStateWithLifecycle()
@@ -835,7 +836,9 @@ fun NowPlayingScreen(
     // A music video plays its own picture where the sleeve is — see
     // [MusicVideoSurface] — and takes the place of any animated cover.
     val videoMode = showsMusicVideo(song)
-    val canvas = rememberCanvasArtwork(song)?.takeUnless { videoMode }?.let {
+    val canvas = rememberCanvasArtwork(song)?.takeUnless { videoMode }?.takeUnless {
+        !enableSpotifyCanvas && it.source == CanvasSource.SPOTIFY
+    }?.let {
         // Apple's 3:4 rendition runs under the whole phone screen, the way its
         // own player shows it; the square one stays the fallback.
         val tall = it.portraitUrl
