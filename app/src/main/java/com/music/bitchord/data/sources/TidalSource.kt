@@ -226,9 +226,7 @@ class TidalSource(
     private fun resolveTidalStream(trackId: String, token: String): SourceStream? {
         val endpoints = listOf(
             "https://api.tidal.com/v1/tracks/$trackId/playbackinfopostpaywall?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
-            "https://api.tidal.com/v1/tracks/$trackId/playbackinfo?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
             "https://api.tidal.com/v1/tracks/$trackId/playbackinfopostpaywall?audioquality=LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
-            "https://api.tidal.com/v1/tracks/$trackId/playbackinfo?audioquality=LOSSLESS&playbackmode=STREAM&assetpresentation=FULL",
         )
 
         for (endpoint in endpoints) {
@@ -240,48 +238,66 @@ class TidalSource(
                     .header("Accept", "application/json")
                     .build()
 
-                okHttpClient.newCall(req).execute().use { response ->
-                    if (!response.isSuccessful) return@use null
+                val (stream, abortAccount) = okHttpClient.newCall(req).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val code = response.code
+                        val errBody = runCatching { response.body?.string().orEmpty() }.getOrDefault("")
+                        val subStatus = runCatching { JSONObject(errBody).optInt("subStatus", 0) }.getOrDefault(0)
+
+                        // 5003 = "Requested quality is not allowed in user's subscription"
+                        val isQualityDisallowed = subStatus == 5003 || errBody.contains("5003")
+                        val abort = when {
+                            code == 403 -> true
+                            code == 401 && !isQualityDisallowed -> true // Invalid/expired token
+                            code == 401 && isQualityDisallowed && !endpoint.contains("HI_RES") -> true // Standard LOSSLESS also disallowed
+                            else -> false
+                        }
+                        return@use Pair(null, abort)
+                    }
+
                     val body = response.body?.string().orEmpty()
-                    if (body.isBlank()) return@use null
+                    if (body.isBlank()) return@use Pair(null, false)
 
                     val json = JSONObject(body)
                     if (json.optString("assetPresentation").equals("PREVIEW", ignoreCase = true)) {
-                        return@use null
+                        return@use Pair(null, false)
                     }
 
-                    val manifestB64 = json.optString("manifest").takeIf { it.isNotBlank() } ?: return@use null
+                    val manifestB64 = json.optString("manifest").takeIf { it.isNotBlank() } ?: return@use Pair(null, false)
                     val manifestMime = json.optString("manifestMimeType").ifBlank { null }
                     val manifestDecoded = runCatching {
                         String(Base64.decode(manifestB64, Base64.DEFAULT), Charsets.UTF_8)
-                    }.getOrNull() ?: return@use null
+                    }.getOrNull() ?: return@use Pair(null, false)
 
                     // 1. JSON BTS Manifest (direct single-file CDN link)
                     if (manifestDecoded.trimStart().startsWith("{")) {
                         val manJson = JSONObject(manifestDecoded)
                         val urls = manJson.optJSONArray("urls")
-                        val streamUrl = urls?.optString(0)?.takeIf { it.isNotBlank() } ?: return@use null
+                        val streamUrl = urls?.optString(0)?.takeIf { it.isNotBlank() } ?: return@use Pair(null, false)
                         val codecs = manJson.optString("codecs", "flac")
                         val mimeType = manJson.optString("mimeType", manifestMime.orEmpty())
                         val isFlac = codecs.contains("flac", true) || mimeType.contains("flac", true)
 
                         if (!isFlac) {
-                            TrackLog.d(TAG, "  Tidal account returned $codecs instead of FLAC, checking next option")
-                            return@use null
+                            TrackLog.d(TAG, "  Tidal account returned $codecs instead of FLAC; aborting account")
+                            return@use Pair(null, true)
                         }
 
                         val sampleRateHz = if (endpoint.contains("HI_RES")) 96000 else 44100
                         val bitDepth = if (endpoint.contains("HI_RES")) 24 else 16
 
-                        return SourceStream(
-                            url = streamUrl,
-                            format = StreamFormat(
-                                codec = "flac",
-                                kbps = if (bitDepth > 16) 2304 else 1411,
-                                sampleRateHz = sampleRateHz,
-                                bitDepth = bitDepth,
+                        return@use Pair(
+                            SourceStream(
+                                url = streamUrl,
+                                format = StreamFormat(
+                                    codec = "flac",
+                                    kbps = if (bitDepth > 16) 2304 else 1411,
+                                    sampleRateHz = sampleRateHz,
+                                    bitDepth = bitDepth,
+                                ),
+                                headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
                             ),
-                            headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
+                            false,
                         )
                     }
 
@@ -299,18 +315,25 @@ class TidalSource(
                             ?: (if (isHiRes) 96000 else 44100)
 
                         TrackLog.d(TAG, "  ✓ Tidal DASH MPD stream resolved (sampleRate=$sampleRateHz, bitDepth=$bitDepth)")
-                        return SourceStream(
-                            url = dataUri,
-                            format = StreamFormat(
-                                codec = "flac",
-                                kbps = if (bitDepth > 16) 2304 else 1411,
-                                sampleRateHz = sampleRateHz,
-                                bitDepth = bitDepth,
+                        return@use Pair(
+                            SourceStream(
+                                url = dataUri,
+                                format = StreamFormat(
+                                    codec = "flac",
+                                    kbps = if (bitDepth > 16) 2304 else 1411,
+                                    sampleRateHz = sampleRateHz,
+                                    bitDepth = bitDepth,
+                                ),
+                                headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
                             ),
-                            headers = mapOf("User-Agent" to TIDAL_USER_AGENT),
+                            false,
                         )
                     }
+                    Pair(null, false)
                 }
+
+                if (stream != null) return stream
+                if (abortAccount) break
             } catch (e: Exception) {
                 TrackLog.w(TAG, "Tidal resolve endpoint failed: ${e.message}")
             }

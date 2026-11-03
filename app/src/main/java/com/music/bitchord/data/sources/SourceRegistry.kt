@@ -506,8 +506,8 @@ object SourceRegistry {
             .toString()
 
     private val BUILT_IN_KINDS = listOf(
-        SourceKind.TIDAL,
         SourceKind.QOBUZ,
+        SourceKind.TIDAL,
         SourceKind.DEEZER,
         SourceKind.JIOSAAVN,
         SourceKind.YOUTUBE,

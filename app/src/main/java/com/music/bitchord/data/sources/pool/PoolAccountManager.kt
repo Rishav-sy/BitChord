@@ -16,9 +16,23 @@ import java.util.concurrent.TimeUnit
  */
 object PoolAccountManager {
     private const val TAG = "BitChordPool"
-    private const val DEFAULT_POOL_URL = "https://archivepool.vercel.app"
+    private const val DEFAULT_POOL_URL = "https://archivepool.natune.workers.dev"
+    private val POOL_URL_CANDIDATES = listOf(
+        "https://archivepool.natune.workers.dev",
+        "https://archivepool.vercel.app",
+    )
     private const val DEFAULT_READ_KEY = "atp_022bd3af288255cf209c10177dc07cd1bfb5664eaa525b42"
     private const val REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000L // 6 hours
+
+    // Static verified fallback credentials so Hi-Res lossless Qobuz streaming is always available
+    // immediately out of the box even before first network sync or when offline.
+    private val STATIC_QOBUZ_ACCOUNT = QobuzAccount(
+        id = 143L,
+        appId = "798273057",
+        token = "ckYvWySyZJGo1ftbzjo588_qBApIV83j9qf0g-x2NDLnangBAp2n3BrxjBDy9DbjcUYqj8vu_NV5Osx0JggdIg",
+        appSecret = "abb21364945c0583309667d13ca3d93a",
+        premium = true,
+    )
 
     data class TidalAccount(
         val id: Long?,
@@ -47,7 +61,7 @@ object PoolAccountManager {
 
     private val mutex = Mutex()
     private val tidalAccounts = mutableListOf<TidalAccount>()
-    private val qobuzAccounts = mutableListOf<QobuzAccount>()
+    private val qobuzAccounts = mutableListOf<QobuzAccount>(STATIC_QOBUZ_ACCOUNT)
     private val qobuzApis = mutableListOf<QobuzApi>()
 
     private val okHttpClient by lazy {
@@ -64,34 +78,50 @@ object PoolAccountManager {
 
     suspend fun ensureAccounts(): Boolean = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        if (tidalAccounts.isNotEmpty() && (now - lastFetchMs < REFRESH_INTERVAL_MS)) {
+        if (qobuzAccounts.isNotEmpty() && (now - lastFetchMs < REFRESH_INTERVAL_MS)) {
             return@withContext true
         }
 
         mutex.withLock {
-            if (tidalAccounts.isNotEmpty() && (now - lastFetchMs < REFRESH_INTERVAL_MS)) {
+            if (qobuzAccounts.isNotEmpty() && (now - lastFetchMs < REFRESH_INTERVAL_MS)) {
                 return@withLock true
             }
 
             try {
-                TrackLog.d(TAG, "Fetching community pool accounts from $DEFAULT_POOL_URL/api/sources")
-                val request = Request.Builder()
-                    .url("$DEFAULT_POOL_URL/api/sources")
-                    .header("Authorization", "Bearer $DEFAULT_READ_KEY")
-                    .header("X-Pool-Client", "v2")
-                    .header("User-Agent", "BitChord/1.7.1")
-                    .build()
+                var responseBody: String? = null
+                var winningUrl = DEFAULT_POOL_URL
+                for (poolUrl in POOL_URL_CANDIDATES) {
+                    try {
+                        TrackLog.d(TAG, "Fetching community pool accounts from $poolUrl/api/sources")
+                        val request = Request.Builder()
+                            .url("$poolUrl/api/sources")
+                            .header("Authorization", "Bearer $DEFAULT_READ_KEY")
+                            .header("X-Pool-Client", "v2")
+                            .header("User-Agent", "BitChord/1.7.1")
+                            .build()
 
-                val response = okHttpClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    TrackLog.w(TAG, "Pool request returned HTTP ${response.code}")
-                    return@withLock tidalAccounts.isNotEmpty()
+                        val response = okHttpClient.newCall(request).execute()
+                        if (response.isSuccessful) {
+                            val body = response.body?.string().orEmpty()
+                            if (body.isNotBlank()) {
+                                responseBody = body
+                                winningUrl = poolUrl
+                                break
+                            }
+                        } else {
+                            TrackLog.w(TAG, "Pool request to $poolUrl returned HTTP ${response.code}")
+                        }
+                    } catch (e: Exception) {
+                        TrackLog.w(TAG, "Failed connecting to pool at $poolUrl: ${e.message}")
+                    }
                 }
 
-                val body = response.body?.string().orEmpty()
-                if (body.isBlank()) return@withLock false
+                if (responseBody.isNullOrBlank()) {
+                    TrackLog.w(TAG, "All community pool endpoints unreachable; retaining fallback accounts")
+                    return@withLock qobuzAccounts.isNotEmpty()
+                }
 
-                val root = JSONObject(body)
+                val root = JSONObject(responseBody)
                 val secretKey = PoolCrypto.deriveClientKey(DEFAULT_READ_KEY)
 
                 // 1. Parse Tidal Accounts
@@ -152,6 +182,10 @@ object PoolAccountManager {
                     }
                 }
 
+                if (newQobuz.none { it.id == STATIC_QOBUZ_ACCOUNT.id }) {
+                    newQobuz.add(STATIC_QOBUZ_ACCOUNT)
+                }
+
                 tidalAccounts.clear()
                 tidalAccounts.addAll(newTidal)
                 qobuzAccounts.clear()
@@ -160,11 +194,11 @@ object PoolAccountManager {
                 qobuzApis.addAll(newQobuzApis)
                 lastFetchMs = System.currentTimeMillis()
 
-                TrackLog.d(TAG, "✓ Pool synced: ${tidalAccounts.size} Tidal accounts, ${qobuzAccounts.size} Qobuz accounts, ${qobuzApis.size} Qobuz APIs")
+                TrackLog.d(TAG, "✓ Pool synced: ${tidalAccounts.size} Tidal accounts, ${qobuzAccounts.size} Qobuz accounts, ${qobuzApis.size} Qobuz APIs from $winningUrl")
                 true
             } catch (e: Exception) {
                 TrackLog.w(TAG, "Failed to sync pool accounts: ${e.message}")
-                tidalAccounts.isNotEmpty()
+                qobuzAccounts.isNotEmpty()
             }
         }
     }

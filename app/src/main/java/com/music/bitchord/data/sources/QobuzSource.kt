@@ -98,67 +98,73 @@ class QobuzSource(
             // 2. Standalone direct Qobuz catalog search
             PoolAccountManager.ensureAccounts()
             val accounts = PoolAccountManager.getQobuzAccounts()
-            val acc = accounts.firstOrNull() ?: return@withContext emptyList()
+            if (accounts.isEmpty()) return@withContext emptyList()
 
-            try {
-                val url = "https://www.qobuz.com/api.json/0.2/track/search"
-                    .toHttpUrlOrNull()
-                    ?.newBuilder()
-                    ?.addQueryParameter("query", query)
-                    ?.addQueryParameter("limit", limit.coerceAtMost(15).toString())
-                    ?.addQueryParameter("app_id", acc.appId)
-                    ?.build() ?: return@withContext emptyList()
+            for (acc in accounts) {
+                try {
+                    val url = "https://www.qobuz.com/api.json/0.2/track/search"
+                        .toHttpUrlOrNull()
+                        ?.newBuilder()
+                        ?.addQueryParameter("query", query)
+                        ?.addQueryParameter("limit", limit.coerceAtMost(15).toString())
+                        ?.addQueryParameter("app_id", acc.appId)
+                        ?.build() ?: continue
 
-                val searchReq = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", QOBUZ_USER_AGENT)
-                    .header("Accept", "application/json")
-                    .header("X-App-Id", acc.appId)
-                    .header("X-User-Auth-Token", acc.token)
-                    .build()
+                    val searchReq = Request.Builder()
+                        .url(url)
+                        .header("User-Agent", QOBUZ_USER_AGENT)
+                        .header("Accept", "application/json")
+                        .header("X-App-Id", acc.appId)
+                        .header("X-User-Auth-Token", acc.token)
+                        .build()
 
-                okHttpClient.newCall(searchReq).execute().use { response ->
-                    if (!response.isSuccessful) return@withContext emptyList()
-                    val body = response.body?.string().orEmpty()
-                    if (body.isBlank()) return@withContext emptyList()
+                    val result = okHttpClient.newCall(searchReq).execute().use { response ->
+                        if (!response.isSuccessful) return@use null
+                        val body = response.body?.string().orEmpty()
+                        if (body.isBlank()) return@use null
 
-                    val root = JSONObject(body)
-                    val tracksObj = root.optJSONObject("tracks")
-                    val items = tracksObj?.optJSONArray("items") ?: return@withContext emptyList()
-                    val result = mutableListOf<Song>()
+                        val root = JSONObject(body)
+                        val tracksObj = root.optJSONObject("tracks")
+                        val items = tracksObj?.optJSONArray("items") ?: return@use null
+                        val list = mutableListOf<Song>()
 
-                    for (i in 0 until items.length()) {
-                        val item = items.optJSONObject(i) ?: continue
-                        val id = item.optLong("id", 0L).toString().takeIf { it != "0" } ?: continue
-                        val title = item.optString("title")
-                        val duration = item.optInt("duration", 0)
-                        val artist = item.optJSONObject("performer")?.optString("name")
-                            ?: item.optJSONObject("artist")?.optString("name")
-                            ?: "Unknown Artist"
-                        val albumObj = item.optJSONObject("album")
-                        val albumName = albumObj?.optString("title")
-                        val cover = albumObj?.optJSONObject("image")?.optString("large")
-                            ?: albumObj?.optJSONObject("image")?.optString("small")
+                        for (i in 0 until items.length()) {
+                            val item = items.optJSONObject(i) ?: continue
+                            val id = item.optLong("id", 0L).toString().takeIf { it != "0" } ?: continue
+                            val title = item.optString("title")
+                            val duration = item.optInt("duration", 0)
+                            val artist = item.optJSONObject("performer")?.optString("name")
+                                ?: item.optJSONObject("artist")?.optString("name")
+                                ?: "Unknown Artist"
+                            val albumObj = item.optJSONObject("album")
+                            val albumName = albumObj?.optString("title")
+                            val cover = albumObj?.optJSONObject("image")?.optString("large")
+                                ?: albumObj?.optJSONObject("image")?.optString("small")
 
-                        result.add(
-                            Song(
-                                videoId = SourceRegistry.trackKey(config.id, id),
-                                title = title,
-                                artist = artist,
-                                albumName = albumName,
-                                thumbnailUrl = cover,
-                                durationText = if (duration > 0) "${duration / 60}:${"%02d".format(Locale.ROOT, duration % 60)}" else null,
-                                sourceQuality = "LOSSLESS",
+                            list.add(
+                                Song(
+                                    videoId = SourceRegistry.trackKey(config.id, id),
+                                    title = title,
+                                    artist = artist,
+                                    albumName = albumName,
+                                    thumbnailUrl = cover,
+                                    durationText = if (duration > 0) "${duration / 60}:${"%02d".format(Locale.ROOT, duration % 60)}" else null,
+                                    sourceQuality = "LOSSLESS",
+                                )
                             )
-                        )
+                        }
+                        list
                     }
-                    TrackLog.d(TAG, "  ✓ Qobuz returned ${result.size} tracks")
-                    result
+
+                    if (!result.isNullOrEmpty()) {
+                        TrackLog.d(TAG, "  ✓ Qobuz returned ${result.size} tracks using account ${acc.id}")
+                        return@withContext result
+                    }
+                } catch (e: Exception) {
+                    TrackLog.w(TAG, "Qobuz search failed with account ${acc.id}: ${e.message}")
                 }
-            } catch (e: Exception) {
-                TrackLog.w(TAG, "Qobuz search failed: ${e.message}")
-                emptyList()
             }
+            emptyList()
         }
 
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
@@ -194,6 +200,8 @@ class QobuzSource(
             val accounts = PoolAccountManager.getQobuzAccounts()
 
             for (acc in accounts) {
+                // Format 27 is Hi-Res max (24-bit 192kHz). Qobuz server automatically returns the highest
+                // available format (e.g. format 7 or 6) if the master is at a lower resolution.
                 for (fmt in listOf(27, 7, 6)) {
                     val stream = resolveQobuzDirect(trackId, fmt, acc)
                     if (stream != null) {
@@ -255,14 +263,15 @@ class QobuzSource(
 
                 val mime = json.optString("mime_type")
                 val isFlac = mime.contains("flac", true) || streamUrl.contains(".flac", true)
-                val sampleRateHz = if (formatId == 27) 192000 else if (formatId == 7) 96000 else 44100
-                val bitDepth = if (formatId > 6) 24 else 16
+                val rateKhz = json.optDouble("sampling_rate", 0.0)
+                val sampleRateHz = if (rateKhz > 0.0) (rateKhz * 1000).toInt() else (if (formatId == 27) 192000 else if (formatId == 7) 96000 else 44100)
+                val bitDepth = json.optInt("bit_depth", if (formatId > 6) 24 else 16)
 
                 SourceStream(
                     url = streamUrl,
                     format = StreamFormat(
                         codec = if (isFlac) "flac" else "mp3",
-                        kbps = if (formatId > 6) 2304 else if (isFlac) 1411 else 320,
+                        kbps = if (bitDepth > 16) 2304 else if (isFlac) 1411 else 320,
                         sampleRateHz = sampleRateHz,
                         bitDepth = bitDepth,
                     ),

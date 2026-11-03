@@ -69,19 +69,19 @@ enum class SourceKind(
      * had. Declared first so a source the user chose on purpose is asked before
      * anything the app fell back to.
      */
-    TIDAL(
-        label = "Tidal",
-        detail = "Tidal Hi-Res and Lossless FLAC streams. Priority lossless source.",
-        labels = listOf("Lossless", "Hi-Res", "FLAC"),
+    QOBUZ(
+        label = "Qobuz",
+        detail = "Qobuz studio quality 24-bit Hi-Res and 16-bit FLAC streams. Priority lossless source.",
+        labels = listOf("Lossless", "Hi-Res", "24-bit"),
         needsServer = false,
         canServeLossless = true,
         rank = 0,
     ),
 
-    QOBUZ(
-        label = "Qobuz",
-        detail = "Qobuz studio quality 24-bit Hi-Res and 16-bit FLAC streams.",
-        labels = listOf("Lossless", "Hi-Res", "24-bit"),
+    TIDAL(
+        label = "Tidal",
+        detail = "Tidal Hi-Res and Lossless FLAC streams.",
+        labels = listOf("Lossless", "Hi-Res", "FLAC"),
         needsServer = false,
         canServeLossless = true,
         rank = 1,

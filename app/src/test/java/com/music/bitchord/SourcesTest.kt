@@ -18,6 +18,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.data.sources.pool.PoolAccountManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -1896,5 +1897,25 @@ class SourcesTest {
         assertNull(TrackMatcher.secondsOf(null))
         assertNull(TrackMatcher.secondsOf("live"))
         assertNull(TrackMatcher.secondsOf("0:00"))
+    }
+
+    // ---- Lossless pool and source priority -----------------------------------
+
+    @Test
+    fun `qobuz is prioritized over tidal and deezer for lossless playback`() {
+        assertTrue(SourceKind.QOBUZ.rank < SourceKind.TIDAL.rank)
+        assertTrue(SourceKind.TIDAL.rank < SourceKind.DEEZER.rank)
+        assertTrue(SourceKind.QOBUZ.canServeLossless)
+        assertTrue(SourceKind.TIDAL.canServeLossless)
+    }
+
+    @Test
+    fun `pool account manager provides static fallback qobuz account`() {
+        val qobuz = PoolAccountManager.getQobuzAccounts()
+        assertTrue("Static fallback Qobuz account should be available immediately", qobuz.isNotEmpty())
+        val primary = qobuz.first()
+        assertTrue(primary.token.isNotBlank())
+        assertTrue(primary.appId.isNotBlank())
+        assertTrue(primary.appSecret.isNotBlank())
     }
 }
