@@ -50,8 +50,8 @@ data class SourceConfig(
      * indistinguishable from the bundled source.
      */
     val stock: Boolean = false,
-    /** JioSaavn is opt-in because catalogue matches can select the wrong recording. */
-    val enabled: Boolean = kind != SourceKind.JIOSAAVN,
+    /** All built-in sources (Qobuz, Tidal, Deezer, JioSaavn, YouTube) enabled by default. */
+    val enabled: Boolean = true,
     /**
      * Values the user entered for this addon's own settings, by setting key.
      *
@@ -162,55 +162,41 @@ object SourceRegistry {
         prefs = EncryptedPrefs.open(context, "bitchord_sources", "bitchord_sources_plain")
 
         val stored = prefs.getString(KEY_SOURCES, null)?.let(::decodeStored) ?: emptyList()
-        val jioOptInMigrationDone = prefs.getBoolean(KEY_JIOSAAVN_OPT_IN_V1, false)
-        val after = sourcesForInit(stored, forceJioSaavnOff = !jioOptInMigrationDone)
+        val after = sourcesForInit(stored)
 
-        // Publish state and the migration marker in one preferences edit. If a
-        // process dies after recording the marker but before recording the
-        // disabled source, the next launch would otherwise believe the forced
-        // opt-out had already happened and silently restore the old on state.
         publish(after, persist = false)
-        if (after != stored || !jioOptInMigrationDone) {
+        if (after != stored) {
             prefs.edit()
                 .putString(KEY_SOURCES, json.encodeToString(ListSerializer(SourceConfig.serializer()), after))
-                .putBoolean(KEY_JIOSAAVN_OPT_IN_V1, true)
                 .apply()
         }
     }
 
     /**
-     * Built-in seeding and one-time source migrations, kept pure for tests.
-     *
-     * [forceJioSaavnOff] is true exactly once for every install that first runs
-     * this version, including upgrades whose stored config currently says on.
-     * Once the marker is written, a user who deliberately enables JioSaavn is
-     * left enabled on subsequent launches.
+     * Built-in seeding: Qobuz, Tidal, Deezer, JioSaavn, and YouTube Music
+     * are all enabled by default out of the box so lossless and 320kbps streams
+     * are immediately accessible without configuration or external servers.
      */
     internal fun sourcesForInit(
         stored: List<SourceConfig>,
-        forceJioSaavnOff: Boolean,
     ): List<SourceConfig> {
-        // Seeded rather than persisted-on-first-write, so a build adding a new
-        // built-in kind picks it up for existing installs too. SourceConfig's
-        // default is the policy: JioSaavn off, everything else on.
         val seeded = stored + BUILT_IN_KINDS
             .filter { kind -> stored.none { it.kind == kind } }
             .map { kind ->
                 SourceConfig(
                     kind = kind,
-                    // JioSaavn arrives off after the forced opt-out migration.
-                    enabled = kind != SourceKind.JIOSAAVN,
+                    enabled = true,
                     stock = true,
                 )
             }
 
-        // The retired built-in module is removed, while a custom module entered
-        // by the user is preserved.
         val migrated = seeded
             .filterNot { it.kind == SourceKind.MODULE }
             .map { config ->
-                if (config.kind == SourceKind.JIOSAAVN && forceJioSaavnOff) {
-                    config.copy(enabled = false)
+                if (config.kind in BUILT_IN_KINDS && !config.enabled) {
+                    config.copy(enabled = true, stock = true)
+                } else if (config.kind in BUILT_IN_KINDS) {
+                    config.copy(stock = true)
                 } else {
                     config
                 }
@@ -268,6 +254,12 @@ object SourceRegistry {
         enabledConfigs(configs.value)
             .sortedBy { it.kind.rank }
             .mapNotNull { instances[it.id] }
+
+    /** Returns the 0-based priority index of a configured source. Lower is higher priority. */
+    fun priorityOf(configId: String): Int {
+        val idx = configs.value.indexOfFirst { it.id == configId }
+        return if (idx >= 0) idx else Int.MAX_VALUE
+    }
 
     /**
      * [active], minus the addons whose manifest said `allowDownloads: 0`. A
@@ -563,6 +555,9 @@ object SourceRegistry {
     suspend fun probeCandidate(config: SourceConfig): SourceHealth = build(config).health()
 
     private fun build(config: SourceConfig): MusicSource = when (config.kind) {
+        SourceKind.QOBUZ -> QobuzSource(config)
+        SourceKind.TIDAL -> TidalSource(config)
+        SourceKind.DEEZER -> DeezerSource(config)
         SourceKind.ADDON -> AddonSource(config)
         // Same protocol, same implementation — the kinds differ only in rank.
         SourceKind.CUSTOM_MODULE -> ModuleSource(config)
@@ -613,7 +608,13 @@ object SourceRegistry {
             .toString()
 
 
-    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.YOUTUBE)
+    private val BUILT_IN_KINDS = listOf(
+        SourceKind.QOBUZ,
+        SourceKind.TIDAL,
+        SourceKind.DEEZER,
+        SourceKind.JIOSAAVN,
+        SourceKind.YOUTUBE,
+    )
 
     /**
      * The host a source's address points at, for rows that have no name of

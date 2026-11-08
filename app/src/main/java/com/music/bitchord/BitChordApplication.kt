@@ -130,6 +130,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // to streaming uncached if the player somehow opens that early.
         thread(name = "startup-init") {
             SourceRegistry.init(this)
+            CoroutineScope(Dispatchers.IO).launch {
+                com.music.bitchord.data.sources.pool.PoolAccountManager.ensureAccounts()
+            }
             AndroidStreamHooks.initInnerTubeX(this)
             // Its own directory: canvas clips are looping video, not audio, and
             // belong in a cache AudioCache's own limit and eviction policy were

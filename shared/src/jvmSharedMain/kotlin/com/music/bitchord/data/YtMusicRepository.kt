@@ -324,6 +324,21 @@ object YtMusicRepository {
     suspend fun search(query: String, filter: SearchFilter): Result<List<SearchResult>> =
         searchPage(query, filter).map { it.rows }
 
+    /**
+     * Machine-initiated searches performed during playback — matching a
+     * module or local track against YouTube, seeding AutoPlay, analysing a
+     * track for Automix. These queries were never typed by the user, so they
+     * go through the unauthenticated [Innertube.searchAnonymous] endpoint to
+     * avoid polluting the user's YouTube search history.
+     */
+    suspend fun searchAnonymous(query: String, filter: SearchFilter): Result<List<SearchResult>> =
+        call("searchAnon:${filter.name}") {
+            InnertubeParser.parseSearchPage(
+                Innertube.searchAnonymous(query, filter.params),
+                includeVideos = filter == SearchFilter.VIDEOS,
+            ).rows.distinctBy { it.identityKey() }
+        }
+
     private fun SearchResult.identityKey(): String = when (this) {
         is SearchResult.TopTrack -> "v:${song.videoId}"
         is SearchResult.Track -> "v:${song.videoId}"

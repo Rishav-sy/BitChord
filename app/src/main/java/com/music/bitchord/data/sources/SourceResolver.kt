@@ -1143,26 +1143,40 @@ object SourceResolver {
      * better; that one asks whether the difference is worth a break in the
      * audio, which is a much higher bar and only meaningful mid-playback.
      */
-    internal fun isBetter(candidate: StreamFormat, current: StreamFormat?): Boolean {
+    internal fun isBetter(
+        candidate: StreamFormat,
+        current: StreamFormat?,
+        candidateRank: Int = Int.MAX_VALUE,
+        currentRank: Int = Int.MAX_VALUE,
+    ): Boolean {
         if (current == null) return true
-        // Immersive first, and ahead of lossless rather than behind it. This
-        // used to sit *after* the lossless test, which made it unreachable in
-        // the only comparison it exists for: an Atmos stream is E-AC-3 and so
-        // answers `isLossless == false`, so a FLAC won on the line above and
-        // the Atmos line below never ran. A track offered as both then played
-        // as the FLAC no matter what the Atmos setting said — and worse, a
-        // mid-playback upgrade would cut the FLAC in over an Atmos stream
-        // already playing. Anything immersive that reaches here has already
-        // cleared [ModuleSource.unplayable], so it is a mix this device and
-        // this listener both want.
         if (candidate.isDolbyAtmos != current.isDolbyAtmos) return candidate.isDolbyAtmos
         if (candidate.isLossless != current.isLossless) return candidate.isLossless == true
-        return (candidate.kbps ?: 0) > (current.kbps ?: 0)
+        if (candidate.isLossless == true && current.isLossless == true) {
+            val candHiRes = candidate.isHiRes
+            val currHiRes = current.isHiRes
+            if (candHiRes != currHiRes) return candHiRes
+            val candBits = candidate.bitDepth ?: 16
+            val currBits = current.bitDepth ?: 16
+            if (candBits != currBits) return candBits > currBits
+            val candRate = candidate.sampleRateHz ?: 44100
+            val currRate = current.sampleRateHz ?: 44100
+            if (candRate != currRate) return candRate > currRate
+            return candidateRank < currentRank
+        }
+        val candKbps = candidate.kbps ?: 0
+        val currKbps = current.kbps ?: 0
+        if (candKbps != currKbps) return candKbps > currKbps
+        return candidateRank < currentRank
     }
 
     /** The higher-quality of two streams — see [isBetter]. */
-    private fun betterOf(current: SourceStream?, candidate: SourceStream): SourceStream =
-        if (current == null || isBetter(candidate.format, current.format)) candidate else current
+    private fun betterOf(current: SourceStream?, candidate: SourceStream): SourceStream {
+        if (current == null) return candidate
+        val candRank = candidate.sourceConfigId?.let { SourceRegistry.priorityOf(it) } ?: Int.MAX_VALUE
+        val currRank = current.sourceConfigId?.let { SourceRegistry.priorityOf(it) } ?: Int.MAX_VALUE
+        return if (isBetter(candidate.format, current.format, candRank, currRank)) candidate else current
+    }
 
     /**
      * Whether a format has said nothing that rules lossless out.

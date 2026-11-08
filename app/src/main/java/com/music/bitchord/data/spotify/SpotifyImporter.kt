@@ -163,7 +163,7 @@ object SpotifyImporter {
      */
     suspend fun matchTrack(track: SpotifyTrack): Song? {
         val query = listOf(track.title, track.artist).filter { it.isNotBlank() }.joinToString(" ")
-        val candidates = YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull()
+        val candidates = YtMusicRepository.searchAnonymous(query, SearchFilter.SONGS).getOrNull()
             ?.filterIsInstance<SearchResult.Track>()
             ?.map { it.song }
             .orEmpty()
@@ -248,7 +248,7 @@ object SpotifyImporter {
             async(Dispatchers.IO) {
                 semaphore.withPermit {
                     val query = "${track.title} ${track.artist}".trim()
-                    val searchResult = YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull()
+                    val searchResult = YtMusicRepository.searchAnonymous(query, SearchFilter.SONGS).getOrNull()
                     val matchedSong = searchResult?.filterIsInstance<SearchResult.Track>()
                         ?.firstOrNull()?.song
 

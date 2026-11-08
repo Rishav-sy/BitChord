@@ -10246,7 +10246,7 @@ class PlaybackService : MediaLibraryService() {
                         } else {
                             try {
                                 withTimeoutOrNull(3000L) {
-                                    YtMusicRepository.search(searchQuery, SearchFilter.SONGS).getOrNull()
+                                    YtMusicRepository.searchAnonymous(searchQuery, SearchFilter.SONGS).getOrNull()
                                         ?.mapNotNull { if (it is SearchResult.Track) it.song else null }
                                 } ?: emptyList()
                             } catch (_: Exception) {
@@ -10435,7 +10435,7 @@ class PlaybackService : MediaLibraryService() {
         if (safeQuery.isEmpty()) return emptyList<Song>() to emptyList()
         val results = try {
             withTimeoutOrNull(3_500L) {
-                YtMusicRepository.search(safeQuery, SearchFilter.ALL).getOrNull()
+                YtMusicRepository.searchAnonymous(safeQuery, SearchFilter.ALL).getOrNull()
             } ?: emptyList()
         } catch (_: Exception) {
             emptyList()

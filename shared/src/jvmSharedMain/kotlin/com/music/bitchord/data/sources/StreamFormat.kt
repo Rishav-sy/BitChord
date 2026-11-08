@@ -60,6 +60,9 @@ data class StreamFormat(
     val isDolbyAtmos: Boolean
         get() = codec in DOLBY_ATMOS_CODECS
 
+    val isHiRes: Boolean
+        get() = (bitDepth ?: 16) > 16 || (sampleRateHz ?: 44100) > 48000
+
     /** "24-bit · 192 kHz", "FLAC", "320 kbps" — whichever parts are known. */
     val summary: String
         get() = if (isDolbyAtmos) "Dolby Atmos" else listOfNotNull(

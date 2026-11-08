@@ -69,6 +69,33 @@ enum class SourceKind(
      * had. Declared first so a source the user chose on purpose is asked before
      * anything the app fell back to.
      */
+    QOBUZ(
+        label = "Qobuz",
+        detail = "Qobuz studio quality 24-bit Hi-Res and 16-bit FLAC streams. Priority lossless source.",
+        labels = listOf("Lossless", "Hi-Res", "24-bit"),
+        needsServer = false,
+        canServeLossless = true,
+        rank = 0,
+    ),
+
+    TIDAL(
+        label = "Tidal",
+        detail = "Tidal Hi-Res and Lossless FLAC streams.",
+        labels = listOf("Lossless", "Hi-Res", "FLAC"),
+        needsServer = false,
+        canServeLossless = true,
+        rank = 1,
+    ),
+
+    DEEZER(
+        label = "Deezer",
+        detail = "Deezer CD-quality 16-bit FLAC streams up to 1411 kbps.",
+        labels = listOf("Lossless", "FLAC", "1411kbps"),
+        needsServer = false,
+        canServeLossless = true,
+        rank = 2,
+    ),
+
     ADDON(
         label = "Addon",
         detail = "An addon server you host or were given a link to. Searched and streamed over " +
@@ -76,73 +103,38 @@ enum class SourceKind(
         labels = listOf("FLAC", "Lossless", "Hi-Res"),
         needsServer = true,
         canServeLossless = true,
-        // Literal, not [USER_ADDED]: an enum entry is constructed before
-        // its own companion exists.
-        rank = 0,
+        rank = 3,
     ),
 
-    /**
-     * A module index the user pointed at themselves.
-     *
-     * Legacy, and no longer offered: the sources screen has no way to add one
-     * and [ADDON] is what that entry point creates now. Kept as a kind so an
-     * index configured by an earlier build keeps working for whoever still has
-     * one — same protocol as [MODULE], served by the same [ModuleSource].
-     */
     CUSTOM_MODULE(
         label = "Custom module",
         detail = "Your own compatible module index. Tried before the built-in one.",
         labels = listOf("FLAC", "Lossless", "Hi-Res", "Plugins"),
         needsServer = true,
         canServeLossless = true,
-        // Literal, not [USER_ADDED]: an enum entry is constructed before
-        // its own companion exists.
-        rank = 0,
+        rank = 3,
     ),
 
-    /**
-     * A URL to a compatible module-index JSON.
-     *
-     * The index lists JS plugin descriptors; each plugin ships a JS file
-     * that exports `searchTracks()` and `getTrackStreamUrl()`. The app
-     * fetches the index, loads each plugin's JS into a QuickJS sandbox,
-     * and calls those functions.
-     *
-     * The JS runs in a sandboxed QuickJS VM with no access to the Android
-     * runtime, only to a wired-in `fetch()` implementation.
-     *
-     * Legacy, and no longer created by anything: this kind was only ever
-     * seeded from a build-time index URL, which this build no longer carries.
-     * [SourceRegistry.init] drops any left over from an install that did. Kept
-     * so the enum a stored config names still exists — see the decode there,
-     * which loses an entry whose kind it cannot resolve.
-     */
     MODULE(
         label = "Module source",
         detail = "A URL to a compatible module index. Modules are JS plugins that " +
-            "can search and stream from services like Tidal, Deezer, Apple Music and more.",
+            "can search and stream from services like Tidal, Qobuz, Apple Music and more.",
         labels = listOf("FLAC", "Lossless", "Hi-Res", "Plugins"),
         needsServer = true,
         canServeLossless = true,
-        rank = 1,
+        rank = 3,
     ),
 
     JIOSAAVN(
         label = "JioSaavn",
-        detail = "Optional JioSaavn streams up to 320kbps AAC/MP4. Catalogue matching can select the wrong song.",
+        detail = "JioSaavn high-quality streams up to 320kbps AAC/MP4. King of Indian & regional music, tried before YouTube.",
         labels = listOf("High Quality", "320kbps"),
         needsServer = false,
         canServeLossless = false,
         worthPrefetching = true,
-        rank = 2,
+        rank = 4,
     ),
 
-    /**
-     * The source the app was built on, listed here so it always has a fixed
-     * place: second, behind the module source. It cannot be removed — see
-     * [SourceRegistry]. Nothing else in the app can supply a home feed, a
-     * radio station or a related-tracks queue.
-     */
     YOUTUBE(
         label = "YouTube Music",
         detail = "The full catalogue, at Opus up to about 171 kbps. Lossy — there is no " +
@@ -150,7 +142,7 @@ enum class SourceKind(
         labels = listOf("Lossy", "Full catalogue", "Radio"),
         needsServer = false,
         canServeLossless = false,
-        rank = 3,
+        rank = 5,
     ),
     ;
 
@@ -162,6 +154,6 @@ enum class SourceKind(
          * The shared rank of every source the user added. Their order among
          * themselves is the stored list order, which is what a drag rewrites.
          */
-        const val USER_ADDED = 0
+        const val USER_ADDED = 3
     }
 }

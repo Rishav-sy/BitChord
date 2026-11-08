@@ -171,12 +171,13 @@ fun SourcesScreen(
     // Enabled only: probing a source the listener switched off is how
     // turned-off addons kept showing up in the log. The toggle means
     // "leave it alone", and health checks are contact.
-    val probeKey = configs.filter { it.kind.needsServer && it.enabled }
+    val isBuiltInLossless: (SourceConfig) -> Boolean = { it.kind in listOf(SourceKind.TIDAL, SourceKind.QOBUZ, SourceKind.DEEZER) }
+    val probeKey = configs.filter { (it.kind.needsServer || isBuiltInLossless(it)) && it.enabled }
         .joinToString { "${it.id}@${it.baseUrl}@${it.checkValidLossless}@${it.settings.hashCode()}" } +
         "@${losslessOutput.capable}"
     LaunchedEffect(probeKey) {
         configs.filter {
-            it.kind.needsServer && it.enabled && it.isComplete && !it.awaitsLosslessOutput
+            (it.kind.needsServer || isBuiltInLossless(it)) && it.enabled && it.isComplete && !it.awaitsLosslessOutput
         }.forEach { config ->
             val source = SourceRegistry.instance(config.id) ?: return@forEach
             health[config.id] = withContext(Dispatchers.IO) {
@@ -829,10 +830,13 @@ private fun SourceRow(
         Spacer(Modifier.width(6.dp))
         Icon(
             imageVector = when (config.kind) {
+                SourceKind.QOBUZ -> Icons.Rounded.GraphicEq
+                SourceKind.TIDAL -> Icons.Rounded.GraphicEq
+                SourceKind.DEEZER -> Icons.Rounded.GraphicEq
                 SourceKind.ADDON -> Icons.Rounded.Extension
                 SourceKind.CUSTOM_MODULE -> Icons.Rounded.Extension
                 SourceKind.MODULE -> Icons.Rounded.Extension
-                SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
+                SourceKind.JIOSAAVN -> Icons.Rounded.Album
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
             },
             contentDescription = null,
@@ -948,7 +952,7 @@ private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
     ).joinToString(" · ")
     health is SourceHealth.Rejected -> health.reason
     health is SourceHealth.Unreachable -> stringResource(R.string.source_unreachable, health.reason)
-    kind.needsServer -> stringResource(R.string.checking)
+    kind.needsServer || kind in listOf(SourceKind.TIDAL, SourceKind.QOBUZ, SourceKind.DEEZER) -> stringResource(R.string.checking)
     else -> kind.labels.take(3).joinToString(" · ")
 }
 

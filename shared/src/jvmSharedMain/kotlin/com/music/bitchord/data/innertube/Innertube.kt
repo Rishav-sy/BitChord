@@ -621,6 +621,20 @@ object Innertube {
             params?.let { put("params", it) }
         }
 
+    /**
+     * Same shape as [search] but deliberately unauthenticated, for searches
+     * the app performs on its own while you listen — matching a module/local
+     * track against YouTube, seeding AutoPlay, analysing a track for Automix.
+     * The listener never typed these queries, so unlike [search] they must
+     * not be recorded against the signed-in account's server-side search
+     * history.
+     */
+    suspend fun searchAnonymous(query: String, params: String? = null): JsonObject =
+        postMusicAnonymous("search") {
+            put("query", query)
+            params?.let { put("params", it) }
+        }
+
     /** The next page of a filtered search result. */
     suspend fun searchContinuation(token: String): JsonObject = postMusic(
         endpoint = "search",
