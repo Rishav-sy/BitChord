@@ -44,6 +44,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.PlaylistRemove
@@ -197,6 +198,7 @@ fun SongActionsSheet(
      */
     audioVersionMissing: Boolean = false,
     onShare: (() -> Unit)? = null,
+    onSing: (() -> Unit)? = null,
     /**
      * Copies what the app logged while starting this track. Null everywhere
      * except the player, where "this track" means something.
@@ -294,6 +296,16 @@ fun SongActionsSheet(
                     onClick = it,
                 )
             }
+            GroupSeparator(palette)
+        }
+
+        if (onSing != null) {
+            ActionRow(
+                icon = Icons.Rounded.Mic,
+                label = stringResource(R.string.sing_title),
+                accent = palette.accent,
+                onClick = onSing,
+            )
             GroupSeparator(palette)
         }
 

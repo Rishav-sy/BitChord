@@ -48,6 +48,9 @@ import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Mic
+import com.music.bitchord.ui.components.StudioModelDialog
+import dev.chrisbanes.haze.HazeState
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DeleteSweep
@@ -303,6 +306,9 @@ fun SettingsScreen(
     var pickingUpdateChannel by remember { mutableStateOf(false) }
     var showCustomRepoDialog by remember { mutableStateOf(false) }
     var showGithubTokenDialog by remember { mutableStateOf(false) }
+    var showJamesDsp by remember { mutableStateOf(false) }
+    var showStudioModels by remember { mutableStateOf(false) }
+    val hazeState = remember { HazeState() }
     val updateScope = rememberCoroutineScope()
 
     // Read here so the row can say "In a party · ABC123" rather than making
@@ -787,6 +793,26 @@ fun SettingsScreen(
                     onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
                 )
             }
+            val bitPerfectTitle = stringResource(R.string.bit_perfect)
+            row(bitPerfectTitle, "bit perfect", "lossless", "exact", "dac") {
+                val bitPerfect by AppSettings.bitPerfect.collectAsStateWithLifecycle()
+                SettingsRow(
+                    icon = Icons.Rounded.GraphicEq,
+                    title = bitPerfectTitle,
+                    subtitle = stringResource(R.string.bit_perfect_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = bitPerfect,
+                            onCheckedChange = AppSettings::setBitPerfect,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setBitPerfect(!bitPerfect) },
+                )
+            }
             // The system panel is not listed here as well. A device with a
             // Dolby or Dirac panel has something BitChord cannot reproduce and
             // keeps its row — but one level in, at the foot of the equaliser
@@ -798,6 +824,24 @@ fun SettingsScreen(
                     title = equalizerTitle,
                     subtitle = stringResource(R.string.equalizer_subtitle),
                     onClick = onEqualizer,
+                )
+            }
+            val jamesDspTitle = stringResource(R.string.jamesdsp)
+            row(jamesDspTitle, "jamesdsp", "dsp", "reverb", "bass", "tube") {
+                SettingsRow(
+                    icon = Icons.Rounded.GraphicEq,
+                    title = jamesDspTitle,
+                    subtitle = stringResource(R.string.jamesdsp_subtitle),
+                    onClick = { showJamesDsp = true },
+                )
+            }
+            val studioTitle = stringResource(R.string.studio_models)
+            row(studioTitle, "sing", "karaoke", "vocal", "studio", "model") {
+                SettingsRow(
+                    icon = Icons.Rounded.Mic,
+                    title = studioTitle,
+                    subtitle = stringResource(R.string.studio_models_subtitle),
+                    onClick = { showStudioModels = true },
                 )
             }
         }
@@ -1649,56 +1693,40 @@ fun SettingsScreen(
 
         SettingsGroup(header = "Updates") {
             SettingsRow(
-                icon = Icons.Rounded.Sync,
-                title = "Update Channel",
-                subtitle = updateChannel.detail,
+                icon = Icons.Rounded.AccountTree,
+                title = "Repository",
+                subtitle = customUpdateRepo,
                 trailing = {
-                    Text(
-                        text = updateChannel.label,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Icon(
+                        imageVector = Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 },
-                onClick = { pickingUpdateChannel = true },
+                onClick = { showCustomRepoDialog = true },
             )
-            if (updateChannel == UpdateChannel.FORK || updateChannel == UpdateChannel.BOTH) {
-                RowDivider()
-                SettingsRow(
-                    icon = Icons.Rounded.AccountTree,
-                    title = "Fork Repository",
-                    subtitle = customUpdateRepo,
-                    trailing = {
-                        Icon(
-                            imageVector = Icons.Rounded.ChevronRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                    onClick = { showCustomRepoDialog = true },
-                )
-                RowDivider()
-                SettingsRow(
-                    icon = Icons.Rounded.Key,
-                    title = "GitHub Token",
-                    subtitle = if (githubUpdateToken.isNotBlank()) "Configured (Private repo access)" else "Optional · Required for private repos",
-                    trailing = {
-                        Icon(
-                            imageVector = Icons.Rounded.ChevronRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                    onClick = { showGithubTokenDialog = true },
-                )
-            }
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.Key,
+                title = "GitHub Token",
+                subtitle = if (githubUpdateToken.isNotBlank()) "Configured (Private repo access)" else "Optional · Required for private repos",
+                trailing = {
+                    Icon(
+                        imageVector = Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+                onClick = { showGithubTokenDialog = true },
+            )
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.CloudDownload,
                 title = "Check for Updates",
                 subtitle = when (val s = checkStatus) {
                     is AppUpdateChecker.CheckStatus.Checking -> "Checking for updates..."
-                    is AppUpdateChecker.CheckStatus.UpToDate -> "Up to date (${s.version}) • ${s.channel}"
-                    is AppUpdateChecker.CheckStatus.Available -> "Update available: v${s.info.version} (${s.info.channel})!"
+                    is AppUpdateChecker.CheckStatus.UpToDate -> "Up to date (${s.version})"
+                    is AppUpdateChecker.CheckStatus.Available -> "Update available: v${s.info.version}!"
                     is AppUpdateChecker.CheckStatus.Failed -> "Check failed: ${s.message}"
                     AppUpdateChecker.CheckStatus.Idle -> "Tap to query latest releases"
                 },
@@ -1729,58 +1757,11 @@ fun SettingsScreen(
                     }
                 },
             )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.AutoMirrored.Rounded.CompareArrows,
-                title = "Release Comparison",
-                subtitle = comparison?.summary() ?: "Tap to compare upstream & fork releases",
-                trailing = {
-                    if (comparison?.isChecking == true) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    } else {
-                        Text(
-                            text = if (comparison != null) "Refresh" else "Compare",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                },
-                onClick = {
-                    updateScope.launch {
-                        AppUpdateChecker.refreshComparison()
-                    }
-                },
-            )
-            comparison?.upstream?.let { u ->
-                RowDivider()
-                SettingsRow(
-                    icon = Icons.Rounded.Cloud,
-                    title = "Upstream (kushagrasinghx)",
-                    subtitle = "${u.tagName} • ${AppUpdateChecker.ReleaseComparison.formatDays(u.daysAgo ?: 0)}${u.publishedAtIso?.take(10)?.let { " ($it)" } ?: ""}",
-                    trailing = {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                            contentDescription = "Open in browser",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    onClick = {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u.releaseUrl)))
-                        }
-                    },
-                )
-            }
             comparison?.fork?.let { f ->
                 RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.AccountTree,
-                    title = "My Fork (${customUpdateRepo.substringAfterLast('/')})",
+                    title = "Latest Release (${customUpdateRepo.substringAfterLast('/')})",
                     subtitle = "${f.tagName} • ${AppUpdateChecker.ReleaseComparison.formatDays(f.daysAgo ?: 0)}${f.publishedAtIso?.take(10)?.let { " ($it)" } ?: ""}",
                     trailing = {
                         Icon(
@@ -2279,6 +2260,13 @@ fun SettingsScreen(
                 }
             },
         )
+    }
+
+    if (showJamesDsp) {
+        JamesDspSheet(onDismiss = { showJamesDsp = false })
+    }
+    if (showStudioModels) {
+        StudioModelDialog(hazeState = hazeState, onDismiss = { showStudioModels = false })
     }
 }
 

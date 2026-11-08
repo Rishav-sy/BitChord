@@ -6,12 +6,21 @@ import com.music.bitchord.playback.EqualizerProcessor
 import com.music.bitchord.playback.LoudnessProcessor
 import com.music.bitchord.playback.SpatialAudioProcessor
 import com.music.bitchord.playback.TransitionFilterProcessor
+import com.music.bitchord.playback.VocalCutProcessor
 
 /**
  * Composite DSP chain executing BitChord's custom audio processors in their canonical sequence:
  *
- * AudioBlock(Float32) -> SpatialAudioProcessor -> EqualizerProcessor
- *   -> TransitionFilterProcessor -> LoudnessProcessor -> AudioBlock(Float32)
+ * AudioBlock(Float32) -> VocalCutProcessor -> SpatialAudioProcessor -> EqualizerProcessor
+ *   -> JamesDspProcessor -> TransitionFilterProcessor -> LoudnessProcessor -> AudioBlock(Float32)
+ *
+ * Sing's vocal cut runs first: it removes the center the other stages would
+ * otherwise widen, equalise and level along with everything else.
+ *
+ * JamesDSP runs after the equaliser and before the per-track transition and
+ * loudness stages. It is a tone/space stage here, not a second output chain:
+ * its own limiter protects the boosts it applies, then LoudnessProcessor has
+ * the last word on level. It is bypassed entirely when switched off.
  *
  * Operates purely on in-place Float32 audio blocks without intermediate fixed-point quantization,
  * preserving full dynamic range and headroom.
@@ -20,20 +29,23 @@ import com.music.bitchord.playback.TransitionFilterProcessor
  * player levels the track *it* is playing, so the two sides of a crossfade are
  * each levelled for their own song — see [LoudnessProcessor]. Last because its
  * limiter has to see the signal every other stage has finished shaping.
- * That limiter is also the equaliser's: [EqualizerProcessor] only takes back
- * half of a boost, and while it is shaping the signal the limiter stays on.
  *
  * ## Staying out of the way
  *
  * Every stage here self-bypasses when its own setting is off, returning before
- * it reads a single sample rather than multiplying through by unity. With all
- * three idle the block leaves this class byte-identical to how it arrived,
+ * it reads a single sample rather than multiplying through by unity. With every
+ * stage idle the block leaves this class byte-identical to how it arrived,
  * which is what lets [PcmBoundary]'s power-of-two scaling round-trip 16- and
  * 24-bit integers unchanged — see `PrecisionAudioSink.publishOutputExactness`.
+ * [isBypassed] lets the sink skip the decode-and-re-encode around that
+ * byte-identical trip entirely.
  */
 class DspChain(
+    val sing: VocalCutProcessor = VocalCutProcessor(),
     val spatial: SpatialAudioProcessor = SpatialAudioProcessor(),
+    val simAtmos: SimulatedAtmosProcessor = SimulatedAtmosProcessor(),
     val equalizer: EqualizerProcessor = EqualizerProcessor(),
+    val jamesDsp: JamesDspProcessor = JamesDspProcessor(),
     val transition: TransitionFilterProcessor = TransitionFilterProcessor(),
     val loudness: LoudnessProcessor = LoudnessProcessor(),
 ) : FloatAudioProcessor {
@@ -43,8 +55,11 @@ class DspChain(
 
     override fun configure(sampleRate: Int, channelCount: Int) {
         this.currentSampleRate = sampleRate
+        sing.configure(sampleRate, channelCount)
         spatial.configure(sampleRate, channelCount)
+        simAtmos.configure(sampleRate, channelCount)
         equalizer.configure(sampleRate, channelCount)
+        jamesDsp.configure(sampleRate, channelCount)
         transition.configure(sampleRate, channelCount)
         loudness.configure(sampleRate, channelCount)
     }
@@ -53,6 +68,23 @@ class DspChain(
     fun onStreamBoundary() {
         loudness.onStreamBoundary()
     }
+
+    /**
+     * Whether [process] would return the block byte-identical, i.e. every stage
+     * is idle. Read on the audio thread once per decoder buffer; when true and
+     * the input and output encodings already match, the sink hands the decoder's
+     * buffer straight to the delegate instead of decoding it to float and
+     * encoding it back.
+     */
+    fun isBypassed(): Boolean =
+        currentSampleRate > 0 &&
+            sing.effectiveLevel <= 0.001f &&
+            !spatial.enabled &&
+            !simAtmos.enabled &&
+            !equalizer.isEnabled &&
+            !jamesDsp.isEnabled &&
+            !transition.isEngaged &&
+            loudness.isParked()
 
     override fun process(block: AudioBlock) {
         if (block.frameCount == 0) return
@@ -70,34 +102,40 @@ class DspChain(
                     Log.d(
                         TAG,
                         "process() #$count frames=$frames sr=$sr " +
-                            "spatial=$spatialOn eq=$eqOn transition=$transitionOn",
+                            "sing=${sing.level} spatial=$spatialOn eq=$eqOn transition=$transitionOn",
                     )
                 } catch (_: Throwable) {
                 }
             }
         }
 
+        sing.process(block)
         spatial.process(block)
+        simAtmos.process(block)
         equalizer.process(block)
+        jamesDsp.process(block)
         transition.process(block)
-        // The equaliser leaves its overs in place for the stages after it to
-        // see; the loudness stage's limiter is what catches whatever survives.
-        loudness.holdLimiter = equalizer.isShaping
         loudness.process(block)
     }
 
     @Suppress("DEPRECATION")
     override fun flush() {
+        sing.flush()
+        simAtmos.flush()
         spatial.flush()
         equalizer.flush()
+        jamesDsp.flush()
         transition.flush()
         loudness.flush()
     }
 
     override fun reset() {
         processCounter = 0L
+        sing.reset()
         spatial.reset()
+        simAtmos.reset()
         equalizer.reset()
+        jamesDsp.reset()
         transition.reset()
         loudness.reset()
     }

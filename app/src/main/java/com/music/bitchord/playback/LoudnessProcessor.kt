@@ -133,6 +133,19 @@ class LoudnessProcessor {
         snap = true
     }
 
+    /**
+     * Whether the next [process] would return before touching a sample:
+     * normalization needs no correction and nothing is left to un-limit.
+     * Read on the audio thread by the DSP chain's bypass probe.
+     */
+    fun isParked(): Boolean {
+        if (holdLimiter || targetGain() != 1f || trimTarget < 1f) return false
+        if (snap) return reduction >= 1f - SETTLED
+        return kotlin.math.abs(currentGain - 1f) < SETTLED &&
+            currentTrim >= 1f - SETTLED &&
+            reduction >= PARK_REDUCTION
+    }
+
     fun process(block: AudioBlock) {
         val frames = block.frameCount
         val channels = channelCount

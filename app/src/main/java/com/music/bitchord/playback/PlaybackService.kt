@@ -75,6 +75,10 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
+import com.music.bitchord.playback.VocalCutProcessor
+import com.music.bitchord.playback.audio.JamesDspConfig
+import com.music.bitchord.playback.audio.JamesDspNative
+import com.music.bitchord.playback.audio.JamesDspProcessor
 import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.cast.CastPlayback
@@ -589,10 +593,14 @@ class PlaybackService : MediaLibraryService() {
      * [spareFilter] are the *roles*, and they trade places at every handoff
      * along with the players. Everything downstream talks in roles.
      */
+    private val singProcessorA = VocalCutProcessor()
+    private val singProcessorB = VocalCutProcessor()
     private val spatialAudioProcessorA = SpatialAudioProcessor()
     private val spatialAudioProcessorB = SpatialAudioProcessor()
     private val equalizerProcessorA = EqualizerProcessor()
     private val equalizerProcessorB = EqualizerProcessor()
+    private val jamesDspProcessorA = JamesDspProcessor()
+    private val jamesDspProcessorB = JamesDspProcessor()
     private val transitionFilterA = TransitionFilterProcessor()
     private val transitionFilterB = TransitionFilterProcessor()
 
@@ -1696,15 +1704,19 @@ class PlaybackService : MediaLibraryService() {
 
         configuredFloatOutput = shouldEnableFloatOutput()
         val exoPlayer = buildPlayer(
+            singProcessorA,
             spatialAudioProcessorA,
             equalizerProcessorA,
+            jamesDspProcessorA,
             transitionFilterA,
             loudnessA,
             ownsSession = true,
         )
         val sparePlayer = buildPlayer(
+            singProcessorB,
             spatialAudioProcessorB,
             equalizerProcessorB,
+            jamesDspProcessorB,
             transitionFilterB,
             loudnessB,
             ownsSession = false,
@@ -3371,13 +3383,15 @@ class PlaybackService : MediaLibraryService() {
      * re-resolving a stream URL for audio that is already local.
      */
     private fun buildPlayer(
+        sing: VocalCutProcessor,
         spatial: SpatialAudioProcessor,
         equalizer: EqualizerProcessor,
+        jamesDsp: JamesDspProcessor,
         filter: TransitionFilterProcessor,
         loudness: LoudnessProcessor,
         ownsSession: Boolean,
     ): ExoPlayer = ExoPlayer.Builder(this)
-        .setRenderersFactory(silenceSkippingRenderers(spatial, equalizer, filter, loudness))
+        .setRenderersFactory(silenceSkippingRenderers(sing, spatial, equalizer, jamesDsp, filter, loudness))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setLoadControl(farBufferingLoadControl())
         .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ ownsSession)
@@ -6604,8 +6618,10 @@ class PlaybackService : MediaLibraryService() {
      * `skipSilenceEnabled` keeps driving it as before.
      */
     private fun silenceSkippingRenderers(
+        sing: VocalCutProcessor,
         spatial: SpatialAudioProcessor,
         equalizer: EqualizerProcessor,
+        jamesDsp: JamesDspProcessor,
         transition: TransitionFilterProcessor,
         loudness: LoudnessProcessor,
     ) = object : FfmpegFallbackRenderersFactory(this) {
@@ -6688,12 +6704,13 @@ class PlaybackService : MediaLibraryService() {
             // them for the same reason: it belongs to the listener and
             // the whole session, while the transition filter belongs to
             // one handoff and has to have the last word on it.
-            val dspChain = DspChain(spatial, equalizer, transition, loudness)
+            val dspChain = DspChain(sing, spatial, equalizer = equalizer, jamesDsp = jamesDsp, transition = transition, loudness = loudness)
             return PrecisionAudioSink(
                 delegate = defaultSink,
                 dspChain = dspChain,
                 enableFloatOutput = enableFloatOutput,
                 preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
+                bitPerfect = { AppSettings.bitPerfect.value },
                 // Which of the two sinks the listener can hear, told by the
                 // role its transition filter currently holds — [activeFilter]
                 // and [spareFilter] trade places at every handoff. Only the
@@ -6934,15 +6951,19 @@ class PlaybackService : MediaLibraryService() {
         activeFilter = transitionFilterA
         spareFilter = transitionFilterB
         val newActive = buildPlayer(
+            singProcessorA,
             spatialAudioProcessorA,
             equalizerProcessorA,
+            jamesDspProcessorA,
             transitionFilterA,
             loudnessA,
             ownsSession = true,
         )
         val newSpare = buildPlayer(
+            singProcessorB,
             spatialAudioProcessorB,
             equalizerProcessorB,
+            jamesDspProcessorB,
             transitionFilterB,
             loudnessB,
             ownsSession = false,
@@ -7112,6 +7133,47 @@ class PlaybackService : MediaLibraryService() {
                 AppSettings.equalizerBands,
             ) { }.collect { applyEqualizer() }
         }
+        scope.launch {
+            combine(
+                AppSettings.jamesDspEnabled,
+                AppSettings.jamesDspBassGainDb,
+                AppSettings.jamesDspStereoLevel,
+                AppSettings.jamesDspTubeLevel,
+                AppSettings.jamesDspReverbPreset,
+            ) { enabled, bass, stereo, tube, reverb ->
+                JamesDspConfig(
+                    enabled = enabled,
+                    bassGainDb = bass,
+                    stereoLevel = stereo,
+                    tubeLevel = tube,
+                    reverbPreset = reverb,
+                )
+            }
+                .combine(AppSettings.jamesDspPreGainDb) { config, gain ->
+                    config.copy(preGainDb = gain)
+                }
+                .combine(AppSettings.jamesDspLimiter) { config, limiter ->
+                    config.copy(limiterEnabled = limiter)
+                }
+                .distinctUntilChanged()
+                .collect { config -> applyJamesDsp(config) }
+        }
+        scope.launch {
+            combine(AppSettings.singLevel, AppSettings.singMethod) { level, method ->
+                level to method
+            }.collect { (level, method) ->
+                singProcessorA.setMethod(method)
+                singProcessorB.setMethod(method)
+                singProcessorA.level = level
+                singProcessorB.level = level
+            }
+        }
+    }
+
+    private fun applyJamesDsp(config: JamesDspConfig) {
+        if (config.enabled) JamesDspNative.warmUp()
+        jamesDspProcessorA.update(config)
+        jamesDspProcessorB.update(config)
     }
 
     /**

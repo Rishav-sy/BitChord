@@ -26,9 +26,12 @@ add_library(bitchord_analysis SHARED
     ${BITCHORD_NATIVE_DIR}/analyzer/resampler.cpp
     ${BITCHORD_NATIVE_DIR}/analyzer/mel_spectrogram.cpp
     ${BITCHORD_NATIVE_DIR}/analyzer/vocal_spectrogram.cpp
+    ${BITCHORD_NATIVE_DIR}/analyzer/mdx_stft.cpp
     jni/analysis_jni.cpp
     jni/mel_jni.cpp
     jni/vocal_jni.cpp
+    jni/mdx_jni.cpp
+    jni/resample_jni.cpp
 )
 
 target_include_directories(bitchord_analysis PRIVATE
@@ -75,3 +78,8 @@ target_link_options(bitchord_dsd PRIVATE "-Wl,-z,max-page-size=16384")
 add_library(bitchord_dst SHARED dsd/dst/decoder.c dsd/dst/jni.cpp)
 target_compile_options(bitchord_dst PRIVATE -O3 -fno-strict-aliasing -fvisibility=hidden)
 target_link_options(bitchord_dst PRIVATE "-Wl,-z,max-page-size=16384")
+
+# JamesDSP's native engine, running in-process on BitChord's own Float32
+# playback stream. See jamesdsp/CMakeLists.txt and JamesDspProcessor.kt.
+add_subdirectory(jamesdsp)
+

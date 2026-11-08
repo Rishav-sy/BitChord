@@ -223,6 +223,8 @@ import com.music.bitchord.ui.components.DownloadManagerSheet
 import com.music.bitchord.ui.components.PlaylistPickerSheet
 import com.music.bitchord.ui.components.ReorderPlaylistPage
 import com.music.bitchord.ui.components.LongPressOrigin
+import com.music.bitchord.ui.components.SingSheet
+import com.music.bitchord.ui.components.StudioModelDialog
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
 import com.music.bitchord.ui.components.HeldContextMenu
@@ -630,6 +632,8 @@ private fun BitChordApp(
     var showSpotifyLogin by remember { mutableStateOf(false) }
     var discordDialog by remember { mutableStateOf<DiscordDialog?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
+    var showSingSheet by remember { mutableStateOf(false) }
+    var showStudioModels by remember { mutableStateOf(false) }
     var showLyricsOffset by remember { mutableStateOf(false) }
     /**
      * Whether the track menu that is up was opened from the player.
@@ -4542,6 +4546,7 @@ private fun BitChordApp(
                 // drops it for a local file via `isOffline`, this catches
                 // the rest.
                 onShare = share.takeIf { song.videoId.isNotBlank() },
+                onSing = if (fromPlayer) { { showSingSheet = true; songActions = null } } else null,
                 onCopyLog = if (fromPlayer) {
                     {
                         songActions = null
@@ -5168,6 +5173,25 @@ private fun BitChordApp(
                     },
                 )
             }
+        }
+
+        if (showSingSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showSingSheet = false },
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                SingSheet(
+                    onDismiss = { showSingSheet = false },
+                    onNeedModel = { showStudioModels = true },
+                )
+            }
+        }
+
+        if (showStudioModels) {
+            StudioModelDialog(
+                hazeState = hazeState,
+                onDismiss = { showStudioModels = false },
+            )
         }
 
         if (showLyricsSources) {

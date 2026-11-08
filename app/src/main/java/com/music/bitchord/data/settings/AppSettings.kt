@@ -14,6 +14,8 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
+import com.music.bitchord.playback.SingMethod
+import com.music.bitchord.playback.StudioQuality
 import com.music.bitchord.ui.player.CanvasTransitionStyle
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -245,12 +247,15 @@ object AppSettings {
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
     val skipSilence = MutableStateFlow(false)
 
-    val updateChannel = MutableStateFlow(UpdateChannel.BOTH)
+    val updateChannel = MutableStateFlow(UpdateChannel.FORK)
     val customUpdateRepo = MutableStateFlow("Rishav-sy/BitChord")
     val githubUpdateToken = MutableStateFlow("")
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
     val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
+
+    val bitPerfect = MutableStateFlow(false)
+    val playerVolume = MutableStateFlow(1f)
 
     /** Prefer an attached USB audio output over the system's normal route. */
     val preferUsbDac = MutableStateFlow(false)
@@ -360,6 +365,19 @@ object AppSettings {
      * makes the row say that preset's name again instead of "Custom" forever.
      */
     val equalizerPreset = MutableStateFlow(EqualizerPreset.FLAT)
+
+    val singMethod = MutableStateFlow(SingMethod.VOICE_GATE)
+    val singLevel = MutableStateFlow(0f)
+    val studioQuality = MutableStateFlow(StudioQuality.MODEL_RATE)
+
+    // ---- JamesDSP ---------------------------------------------------------
+    val jamesDspEnabled = MutableStateFlow(false)
+    val jamesDspBassGainDb = MutableStateFlow(0f)
+    val jamesDspStereoLevel = MutableStateFlow(0f)
+    val jamesDspTubeLevel = MutableStateFlow(0f)
+    val jamesDspReverbPreset = MutableStateFlow(-1)
+    val jamesDspPreGainDb = MutableStateFlow(0f)
+    val jamesDspLimiter = MutableStateFlow(true)
 
     val playbackSpeed = MutableStateFlow(1.0f)
     val themeMode = MutableStateFlow(ThemeMode.DARK)
@@ -865,8 +883,11 @@ object AppSettings {
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         updateChannel.value = runCatching {
-            UpdateChannel.valueOf(prefs.getString(KEY_UPDATE_CHANNEL, null) ?: UpdateChannel.BOTH.name)
-        }.getOrDefault(UpdateChannel.BOTH)
+            UpdateChannel.valueOf(prefs.getString(KEY_UPDATE_CHANNEL, null) ?: UpdateChannel.FORK.name)
+        }.getOrDefault(UpdateChannel.FORK)
+        if (updateChannel.value == UpdateChannel.OFFICIAL || updateChannel.value == UpdateChannel.BOTH) {
+            updateChannel.value = UpdateChannel.FORK
+        }
         customUpdateRepo.value = prefs.getString(KEY_CUSTOM_UPDATE_REPO, "Rishav-sy/BitChord") ?: "Rishav-sy/BitChord"
         githubUpdateToken.value = prefs.getString(KEY_GITHUB_UPDATE_TOKEN, "") ?: ""
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
@@ -883,6 +904,7 @@ object AppSettings {
                     ?: OutputPcmMode.PCM_16.name,
             )
         }.getOrDefault(OutputPcmMode.PCM_16)
+        bitPerfect.value = prefs.getBoolean(KEY_BIT_PERFECT, false)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         loudnessNormalization.value = prefs.getBoolean(KEY_LOUDNESS_NORMALIZATION, true)
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
@@ -899,6 +921,16 @@ object AppSettings {
         equalizerBalance.value = prefs.getFloat(KEY_EQ_BALANCE, 0f).coerceIn(-1f, 1f)
         equalizerBands.value = readEqualizerBands()
         equalizerPreset.value = EqualizerPreset.matching(equalizerBands.value)
+        singLevel.value = prefs.getFloat(KEY_SING_LEVEL, 0f).coerceIn(0f, 1f)
+        singMethod.value = SingMethod.fromName(prefs.getString(KEY_SING_METHOD, null))
+        studioQuality.value = StudioQuality.fromName(prefs.getString(KEY_STUDIO_QUALITY, null))
+        jamesDspEnabled.value = prefs.getBoolean(KEY_JAMESDSP_ENABLED, false)
+        jamesDspBassGainDb.value = prefs.getFloat(KEY_JAMESDSP_BASS_DB, 0f).coerceIn(0f, 15f)
+        jamesDspStereoLevel.value = prefs.getFloat(KEY_JAMESDSP_STEREO, 0f).coerceIn(0f, 100f)
+        jamesDspTubeLevel.value = prefs.getFloat(KEY_JAMESDSP_TUBE, 0f).coerceIn(0f, 100f)
+        jamesDspReverbPreset.value = prefs.getInt(KEY_JAMESDSP_REVERB, -1).coerceIn(-1, 18)
+        jamesDspPreGainDb.value = prefs.getFloat(KEY_JAMESDSP_PREGAIN_DB, 0f).coerceIn(-15f, 15f)
+        jamesDspLimiter.value = prefs.getBoolean(KEY_JAMESDSP_LIMITER, true)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
         themeMode.value = runCatching {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
@@ -1219,6 +1251,62 @@ object AppSettings {
     fun setSpatialAudio(value: Boolean) {
         spatialAudio.value = value
         prefs.edit().putBoolean(KEY_SPATIAL_AUDIO, value).apply()
+    }
+
+    fun setSingMethod(value: SingMethod) {
+        singMethod.value = value
+        prefs.edit().putString(KEY_SING_METHOD, value.name).apply()
+    }
+
+    fun setSingLevel(value: Float) {
+        val coerced = value.coerceIn(0f, 1f)
+        singLevel.value = coerced
+        prefs.edit().putFloat(KEY_SING_LEVEL, coerced).apply()
+    }
+
+    fun setStudioQuality(value: StudioQuality) {
+        studioQuality.value = value
+        prefs.edit().putString(KEY_STUDIO_QUALITY, value.settingName).apply()
+    }
+
+    fun setJamesDspEnabled(value: Boolean) {
+        jamesDspEnabled.value = value
+        prefs.edit().putBoolean(KEY_JAMESDSP_ENABLED, value).apply()
+    }
+
+    fun setJamesDspBassGain(value: Float) {
+        val clamped = value.coerceIn(0f, 15f)
+        jamesDspBassGainDb.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_BASS_DB, clamped).apply()
+    }
+
+    fun setJamesDspStereoLevel(value: Float) {
+        val clamped = value.coerceIn(0f, 100f)
+        jamesDspStereoLevel.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_STEREO, clamped).apply()
+    }
+
+    fun setJamesDspTubeLevel(value: Float) {
+        val clamped = value.coerceIn(0f, 100f)
+        jamesDspTubeLevel.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_TUBE, clamped).apply()
+    }
+
+    fun setJamesDspReverbPreset(value: Int) {
+        val clamped = value.coerceIn(-1, 18)
+        jamesDspReverbPreset.value = clamped
+        prefs.edit().putInt(KEY_JAMESDSP_REVERB, clamped).apply()
+    }
+
+    fun setJamesDspPreGain(value: Float) {
+        val clamped = value.coerceIn(-15f, 15f)
+        jamesDspPreGainDb.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_PREGAIN_DB, clamped).apply()
+    }
+
+    fun setJamesDspLimiter(value: Boolean) {
+        jamesDspLimiter.value = value
+        prefs.edit().putBoolean(KEY_JAMESDSP_LIMITER, value).apply()
     }
 
     fun setEqualizerEnabled(value: Boolean) {
@@ -1643,6 +1731,11 @@ object AppSettings {
     fun setOutputPcmMode(value: OutputPcmMode) {
         outputPcmMode.value = value
         prefs.edit().putString(KEY_OUTPUT_PCM_MODE, value.name).apply()
+    }
+
+    fun setBitPerfect(value: Boolean) {
+        bitPerfect.value = value
+        prefs.edit().putBoolean(KEY_BIT_PERFECT, value).apply()
     }
 
     fun setPreferUsbDac(value: Boolean) {
@@ -2088,6 +2181,7 @@ object AppSettings {
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
+    private const val KEY_BIT_PERFECT = "bit_perfect"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"
@@ -2134,6 +2228,16 @@ object AppSettings {
     private const val KEY_CANVAS_TRANSITION_STYLE = "canvas_transition_style"
     private const val KEY_IGNORE_LOSSLESS_OUTPUT_CHECK = "ignore_lossless_output_check"
     private const val KEY_SIGNATURE_API_ENABLED = "signature_api_enabled"
+    private const val KEY_SING_METHOD = "sing_method"
+    private const val KEY_SING_LEVEL = "sing_level"
+    private const val KEY_STUDIO_QUALITY = "studio_quality"
+    private const val KEY_JAMESDSP_ENABLED = "jamesdsp_enabled"
+    private const val KEY_JAMESDSP_BASS_DB = "jamesdsp_bass_db"
+    private const val KEY_JAMESDSP_STEREO = "jamesdsp_stereo_level"
+    private const val KEY_JAMESDSP_TUBE = "jamesdsp_tube_level"
+    private const val KEY_JAMESDSP_REVERB = "jamesdsp_reverb_preset"
+    private const val KEY_JAMESDSP_PREGAIN_DB = "jamesdsp_pregain_db"
+    private const val KEY_JAMESDSP_LIMITER = "jamesdsp_limiter"
     private const val KEY_SIGNATURE_API_URL = "signature_api_url"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"

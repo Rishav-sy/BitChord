@@ -37,7 +37,7 @@ import com.music.bitchord.data.settings.UpdateChannel
  */
 object AppUpdateChecker {
 
-    const val OFFICIAL_REPO = "kushagrasinghx/BitChord"
+    const val OFFICIAL_REPO = "Rishav-sy/BitChord"
 
     data class UpdateInfo(
         val version: String,
@@ -229,16 +229,7 @@ object AppUpdateChecker {
 
     suspend fun refreshComparison(): ReleaseComparison = withContext(Dispatchers.IO) {
         _comparison.value = _comparison.value?.copy(isChecking = true) ?: ReleaseComparison(null, null, isChecking = true)
-        val customRepo = AppSettings.customUpdateRepo.value.ifBlank { "Rishav-sy/BitChord" }
-
-        var uMeta: RepoReleaseMeta? = null
-        var uErr: String? = null
-        try {
-            uMeta = fetchRepoRelease(OFFICIAL_REPO, isUpstream = true)
-            if (uMeta == null) uErr = "No release found"
-        } catch (e: Exception) {
-            uErr = e.message ?: "Failed to fetch upstream"
-        }
+        val customRepo = AppSettings.customUpdateRepo.value.ifBlank { OFFICIAL_REPO }
 
         var fMeta: RepoReleaseMeta? = null
         var fErr: String? = null
@@ -256,9 +247,9 @@ object AppUpdateChecker {
         }
 
         val comp = ReleaseComparison(
-            upstream = uMeta,
+            upstream = null,
             fork = fMeta,
-            upstreamError = uErr,
+            upstreamError = null,
             forkError = fErr,
             isChecking = false,
         )
@@ -267,48 +258,20 @@ object AppUpdateChecker {
     }
 
     private suspend fun resolveUpdate(): UpdateInfo? {
-        val channel = AppSettings.updateChannel.value
-        val customRepo = AppSettings.customUpdateRepo.value.ifBlank { "Rishav-sy/BitChord" }
+        val customRepo = AppSettings.customUpdateRepo.value.ifBlank { OFFICIAL_REPO }
 
-        val upstreamMeta = if (channel == UpdateChannel.OFFICIAL || channel == UpdateChannel.BOTH) {
-            fetchRepoRelease(OFFICIAL_REPO, isUpstream = true)
-        } else null
+        val forkMeta = fetchRepoRelease(customRepo, isUpstream = false)
+            ?: fetchRepoRelease(OFFICIAL_REPO, isUpstream = false)
 
-        val forkMeta = if (channel == UpdateChannel.FORK || channel == UpdateChannel.BOTH) {
-            fetchRepoRelease(customRepo, isUpstream = false)
-        } else null
-
-        val official = upstreamMeta?.takeIf { isNewer(it.tagName.removePrefix("v"), BuildConfig.VERSION_NAME) }?.let {
+        return forkMeta?.takeIf { isNewer(it.tagName.removePrefix("v"), BuildConfig.VERSION_NAME) }?.let {
             UpdateInfo(
                 version = it.tagName.removePrefix("v"),
                 releaseUrl = it.releaseUrl,
                 apkUrl = it.apkUrl,
                 notes = it.notes,
-                channel = "Official",
-                repo = OFFICIAL_REPO,
-            )
-        }
-
-        val fork = forkMeta?.takeIf { isNewer(it.tagName.removePrefix("v"), BuildConfig.VERSION_NAME) }?.let {
-            UpdateInfo(
-                version = it.tagName.removePrefix("v"),
-                releaseUrl = it.releaseUrl,
-                apkUrl = it.apkUrl,
-                notes = it.notes,
-                channel = "My Fork",
+                channel = "Release",
                 repo = customRepo,
             )
-        }
-
-        return when (channel) {
-            UpdateChannel.OFFICIAL -> official
-            UpdateChannel.FORK -> fork
-            UpdateChannel.BOTH -> when {
-                official == null -> fork
-                fork == null -> official
-                isNewer(fork.version, official.version) -> fork
-                else -> official
-            }
         }
     }
 
@@ -362,13 +325,13 @@ object AppUpdateChecker {
             }
             .orEmpty()
 
-        apks.firstOrNull { (name, _) ->
-            name.contains("universal", ignoreCase = true) ||
-                ('_' !in name && !name.contains("arm", ignoreCase = true) && !name.contains("x86", ignoreCase = true))
-        }?.second
-            ?: Build.SUPPORTED_ABIS.firstNotNullOfOrNull { abi ->
-                apks.firstOrNull { (name, _) -> name.contains(abi, ignoreCase = true) }?.second
-            }
+        Build.SUPPORTED_ABIS.firstNotNullOfOrNull { abi ->
+            apks.firstOrNull { (name, _) -> name.contains(abi, ignoreCase = true) }?.second
+        }
+            ?: apks.firstOrNull { (name, _) ->
+                name.contains("universal", ignoreCase = true) ||
+                    ('_' !in name && !name.contains("arm", ignoreCase = true) && !name.contains("x86", ignoreCase = true))
+            }?.second
             ?: apks.firstOrNull()?.second
     }.getOrNull()
 
