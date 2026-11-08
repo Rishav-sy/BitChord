@@ -50,8 +50,11 @@ object AppUpdateChecker {
 
     private const val CACHE_SUBDIR = "updates"
 
-    private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/OreoMuncher45/BitChordNext/releases/latest"
+    private val REPO_CANDIDATES = listOf(
+        "Rishav-sy/BitChord",
+        "OreoMuncher45/BitChordNext",
+        "kushagrasinghx/BitChord",
+    )
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -74,26 +77,36 @@ object AppUpdateChecker {
     private var downloadCancelled = false
 
     suspend fun check(context: Context) = withContext(Dispatchers.IO) {
-        runCatching {
-            val request = Request.Builder().url(LATEST_RELEASE_URL).build()
-            val body = Http.client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) null else response.body?.string()
-            } ?: return@runCatching
-            val release = json.parseToJsonElement(body) as? JsonObject ?: return@runCatching
-            val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
-            val url = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return@runCatching
-            val apkUrl = apkAssetUrl(release)
-            val notes = release["body"]?.jsonPrimitive?.contentOrNull
-            val latest = tag.removePrefix("v")
-            val publishedAt = release["published_at"]
-                ?.jsonPrimitive
-                ?.contentOrNull
-                ?.let(::parseTimestamp)
-            val installedAt = installedAt(context)
-            if (isNewer(latest, BuildConfig.VERSION_NAME) ||
-                isRebuiltArtifact(latest, BuildConfig.VERSION_NAME, publishedAt, installedAt)
-            ) {
-                _available.value = UpdateInfo(latest, url, apkUrl, notes)
+        for (repo in REPO_CANDIDATES) {
+            val found = runCatching {
+                val url = "https://api.github.com/repos/$repo/releases/latest"
+                val request = Request.Builder().url(url).build()
+                val body = Http.client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) null else response.body?.string()
+                } ?: return@runCatching null
+
+                val release = json.parseToJsonElement(body) as? JsonObject ?: return@runCatching null
+                val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
+                val htmlUrl = release["html_url"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
+                val apkUrl = apkAssetUrl(release)
+                val notes = release["body"]?.jsonPrimitive?.contentOrNull
+                val latest = tag.removePrefix("v")
+                val publishedAt = release["published_at"]
+                    ?.jsonPrimitive
+                    ?.contentOrNull
+                    ?.let(::parseTimestamp)
+                val installedAt = installedAt(context)
+
+                if (isNewer(latest, BuildConfig.VERSION_NAME) ||
+                    isRebuiltArtifact(latest, BuildConfig.VERSION_NAME, publishedAt, installedAt)
+                ) {
+                    UpdateInfo(latest, htmlUrl, apkUrl, notes)
+                } else null
+            }.getOrNull()
+
+            if (found != null) {
+                _available.value = found
+                break
             }
         }
     }
@@ -137,15 +150,26 @@ object AppUpdateChecker {
      * page as before.
      */
     private fun apkAssetUrl(release: JsonObject): String? = runCatching {
-        release["assets"]?.jsonArray
+        val assets = release["assets"]?.jsonArray
             ?.mapNotNull { it as? JsonObject }
-            ?.firstOrNull { asset ->
-                asset["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk", ignoreCase = true) == true &&
-                    asset["state"]?.jsonPrimitive?.contentOrNull == "uploaded"
-            }
-            ?.get("browser_download_url")
-            ?.jsonPrimitive
-            ?.contentOrNull
+            ?.filter { asset ->
+                val name = asset["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                val uploaded = asset["state"]?.jsonPrimitive?.contentOrNull == "uploaded"
+                name.endsWith(".apk", ignoreCase = true) && uploaded
+            } ?: return null
+
+        if (assets.isEmpty()) return null
+
+        val primaryAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+        val candidate = assets.firstOrNull { asset ->
+            val name = asset["name"]?.jsonPrimitive?.contentOrNull.orEmpty().lowercase()
+            name.contains(primaryAbi.lowercase())
+        } ?: assets.firstOrNull { asset ->
+            val name = asset["name"]?.jsonPrimitive?.contentOrNull.orEmpty().lowercase()
+            name.contains("universal") || (!name.contains("v7a") && !name.contains("x86"))
+        } ?: assets.firstOrNull()
+
+        candidate?.get("browser_download_url")?.jsonPrimitive?.contentOrNull
     }.getOrNull()
 
     /**
